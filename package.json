@@ -1,0 +1,16 @@
+{
+  "name": "couchmatch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gemeinsam swipen, bis ein Film passt — Tinder-Prinzip für den Filmabend.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "sync": "node server.js --sync-only",
+    "test": "node --test test/*.test.js",
+    "smoke": "node scripts/smoke.mjs"
+  }
+}

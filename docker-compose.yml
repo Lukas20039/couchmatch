@@ -1,0 +1,12 @@
+services:
+  couchmatch:
+    image: ghcr.io/lukas20039/couchmatch:latest
+    container_name: couchmatch
+    restart: unless-stopped
+    ports:
+      - "8095:8095"
+    volumes:
+      - couchmatch-data:/data
+
+volumes:
+  couchmatch-data:
