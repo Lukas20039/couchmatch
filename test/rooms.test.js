@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { authPlayer, castVote, createRoom, joinRoom, loadRooms, matches, viewFor } from '../lib/rooms.js';
+import {
+  authPlayer, castVote, createRoom, joinRoom, loadRooms, matches, pickFinal, resetFinal, startFinal,
+  toggleVeto, viewFor,
+} from '../lib/rooms.js';
 import { filterItems, sanitizeFilters } from '../lib/catalog.js';
 
 await loadRooms(await fs.mkdtemp(path.join(os.tmpdir(), 'couchmatch-')));
@@ -47,6 +50,75 @@ test('Fremde Stimmen bleiben verborgen, Token wird geprüft', () => {
   assert.equal(v.players.find((p) => p.id === b.id).voted, 1);
   assert.ok(!JSON.stringify(v).includes(b.token));
   assert.throws(() => authPlayer(room, b.id, 'falsch'), /Unbekannter/);
+});
+
+function roomWithMatches(n, { vetoLimit = 1 } = {}) {
+  const list = Array.from({ length: n }, (_, i) => ({ id: `tt${100 + i}`, name: `Film ${i}` }));
+  const { room, player: a } = createRoom({ filters: {}, items: list, superLimit: 0, vetoLimit, hostName: 'A' });
+  const b = joinRoom(room, 'B');
+  // absteigende Scores: die ersten Titel bekommen "super", die späteren "like"
+  list.forEach((it, i) => {
+    castVote(room, a, it.id, i < n / 2 ? 'super' : 'like');
+    castVote(room, b, it.id, 'like');
+  });
+  return { room, a, b, list };
+}
+
+test('Veto streicht Match für alle, ist begrenzt und zurücknehmbar', () => {
+  const { room, a, b } = roomWithMatches(3);
+  toggleVeto(room, a, 'tt100');
+  assert.deepEqual(matches(room).map((m) => m.id), ['tt101', 'tt102']);
+  assert.deepEqual(viewFor(room, b.id).vetoes, [{ id: 'tt100', by: a.id }]);
+  assert.throws(() => toggleVeto(room, a, 'tt101'), /Kein Veto-Joker/);
+  assert.throws(() => toggleVeto(room, b, 'tt100'), /jemand anderes/);
+  toggleVeto(room, a, 'tt100'); // zurücknehmen
+  assert.equal(matches(room).length, 3);
+  assert.throws(() => toggleVeto(room, a, 'tt999'), /Nur Matches/);
+});
+
+test('Finale: K.-o. mit Freilos, verborgene Stimmen, Gleichstand nach Score', () => {
+  const { room, a, b } = roomWithMatches(5);
+  startFinal(room);
+  const f = room.final;
+  assert.deepEqual(f.entries, ['tt100', 'tt101', 'tt102', 'tt103', 'tt104']);
+  // 5 Titel: bester Setzplatz bekommt ein Freilos, dann 2 Duelle
+  assert.equal(f.rounds[0].bye, 'tt100');
+  assert.deepEqual(f.rounds[0].duels.map((d) => [d.a, d.b]), [['tt101', 'tt104'], ['tt102', 'tt103']]);
+  assert.throws(() => toggleVeto(room, a, 'tt100'), /Finale/);
+
+  pickFinal(room, a, 0, 'tt104');
+  const seenByB = viewFor(room, b.id).final.rounds[0].duels[0];
+  assert.deepEqual(seenByB.picks, {}, 'Wahl von A bleibt vor der Entscheidung verborgen');
+  assert.deepEqual(seenByB.picked, [a.id]);
+  pickFinal(room, b, 0, 'tt104');
+  assert.equal(f.rounds[0].duels[0].winner, 'tt104');
+  assert.equal(f.rounds[0].duels[0].decidedBy, 'unanimous');
+
+  // Uneinig: höherer Score gewinnt (tt102 = super+like > tt103 = like+like)
+  pickFinal(room, a, 1, 'tt103');
+  pickFinal(room, b, 1, 'tt102');
+  assert.equal(f.rounds[0].duels[1].winner, 'tt102');
+  assert.equal(f.rounds[0].duels[1].decidedBy, 'score');
+
+  // Runde 2: tt100 (Freilos), tt102, tt104 → wieder Freilos für tt100
+  assert.equal(f.rounds[1].bye, 'tt100');
+  assert.deepEqual(f.rounds[1].duels.map((d) => [d.a, d.b]), [['tt102', 'tt104']]);
+  pickFinal(room, a, 0, 'tt104');
+  pickFinal(room, b, 0, 'tt104');
+  // Runde 3: Endspiel
+  assert.deepEqual(f.rounds[2].duels.map((d) => [d.a, d.b]), [['tt100', 'tt104']]);
+  pickFinal(room, a, 0, 'tt100');
+  pickFinal(room, b, 0, 'tt100');
+  assert.equal(f.winner, 'tt100');
+  assert.throws(() => pickFinal(room, a, 0, 'tt100'), /kein Finale/);
+
+  resetFinal(room);
+  assert.equal(viewFor(room, a.id).final, null);
+});
+
+test('Finale braucht mindestens 2 Matches', () => {
+  const { room } = roomWithMatches(1);
+  assert.throws(() => startFinal(room), /mindestens 2/);
 });
 
 test('Filter: Typen, Genres, Ausschlüsse, Kurzfilme, unveröffentlicht', () => {

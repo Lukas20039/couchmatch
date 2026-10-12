@@ -6,11 +6,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CATEGORIES, GENRES, allItems, catalogStatus, filterItems, loadCatalog, sample,
+  CATEGORIES, GENRES, MOODS, allItems, catalogStatus, filterItems, loadCatalog, sample,
   sanitizeFilters, syncCatalog, toCard,
 } from './lib/catalog.js';
 import {
-  HttpError, addItems, authPlayer, castVote, createRoom, flushRooms, getRoom, joinRoom, loadRooms, viewFor,
+  HttpError, addItems, authPlayer, castVote, createRoom, flushRooms, getRoom, joinRoom, loadRooms,
+  pickFinal, resetFinal, startFinal, toggleVeto, viewFor,
 } from './lib/rooms.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +94,7 @@ async function api(req, res, url) {
       catalog: catalogStatus(),
       genres: GENRES,
       categories: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) => [k, v.label])),
+      moods: MOODS,
     });
   }
 
@@ -115,9 +117,11 @@ async function api(req, res, url) {
     const list = filterItems(allItems(), filters);
     if (!list.length) throw new HttpError(400, 'Mit diesen Filtern gibt es keine Titel.');
     const superLimit = Math.min(50, Math.max(0, Math.round(Number(body.superLimit) || 0)));
+    const vetoLimit = Math.min(5, Math.max(0, Math.round(Number(body.vetoLimit) || 0)));
     const { room, player } = createRoom({
       filters,
       superLimit,
+      vetoLimit,
       items: sample(list, clampCount(body.count)).map(toCard),
       hostName: body.name,
     });
@@ -173,6 +177,25 @@ async function api(req, res, url) {
     const body = await readBody(req);
     const p = authPlayer(room, body.playerId, body.token);
     castVote(room, p, String(body.itemId || ''), body.vote ?? null);
+    broadcast(room);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && action === 'veto') {
+    const body = await readBody(req);
+    const p = authPlayer(room, body.playerId, body.token);
+    toggleVeto(room, p, String(body.itemId || ''));
+    broadcast(room);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && action === 'final') {
+    const body = await readBody(req);
+    const p = authPlayer(room, body.playerId, body.token);
+    if (body.action === 'start') startFinal(room);
+    else if (body.action === 'reset') resetFinal(room);
+    else if (body.action === 'pick') pickFinal(room, p, Number(body.duel), String(body.itemId || ''));
+    else throw new HttpError(400, 'Unbekannte Aktion.');
     broadcast(room);
     return send(res, 200, { ok: true });
   }

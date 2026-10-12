@@ -14,6 +14,25 @@ const watch = (page, who) => {
   page.on('console', (m) => m.type() === 'error' && errors.push(`${who} console: ${m.text()}`));
 };
 
+// Stimmungs-Vorlage in eigenem Kontext (eigener localStorage)
+{
+  const page = await (await browser.newContext(phone)).newPage();
+  watch(page, 'mood');
+  await page.goto(BASE);
+  await page.waitForSelector('[data-mood="crime"]');
+  const before = await page.textContent('#pool');
+  await page.click('[data-mood="crime"]');
+  await page.waitForTimeout(600);
+  const on = await page.$$eval('#genres .chip.on', (els) => els.map((e) => e.textContent));
+  const off = await page.$$eval('#genres .chip.off', (els) => els.map((e) => e.textContent));
+  console.log('Stimmung Krimi → rein:', on.join(', '), '| raus:', off.join(', '), '| IMDb:', await page.textContent('#ratingVal'));
+  console.log('  Pool vorher:', before.replace(/ —.*/, ''), '→ nachher:', (await page.textContent('#pool')).replace(/ —.*/, ''));
+  await page.screenshot({ path: `${SHOTS}/00-mood.png` });
+  await page.click('[data-genre="Thriller"]'); // Handänderung hebt die Vorlage auf
+  console.log('  Vorlage nach Handänderung noch aktiv:', await page.locator('[data-mood="crime"].on').count() === 1);
+  await page.context().close();
+}
+
 const hostCtx = await browser.newContext(phone);
 const host = await hostCtx.newPage();
 watch(host, 'host');
@@ -109,28 +128,80 @@ await guest.click('[data-act="like"]');
 await guest.waitForTimeout(600);
 for (const p of [host, guest]) await dismiss(p);
 
-// Rest durchswipen
+// Rest: beide liken alles → genug Matches für ein Finale
 for (const p of [host, guest]) {
   while (await p.locator('.card.top').count()) {
     await p.locator('.overlay [data-close]').click({ timeout: 200 }).catch(() => {});
-    await p.click('[data-act="nope"]');
+    await p.click('[data-act="like"]');
     await p.waitForTimeout(350);
   }
 }
+// Matches, die beim Host erst durch die letzten Swipes des Gastes entstanden sind
+await host.waitForTimeout(800);
+while (await host.locator('.match-pop').count()) {
+  await host.locator('.overlay [data-close]').click();
+  await host.waitForTimeout(150);
+}
+await guest.locator('.overlay [data-close]').click({ timeout: 600 }).catch(() => {});
 await host.waitForSelector('#resultsBtn');
 await host.screenshot({ path: `${SHOTS}/07-done.png` });
 await host.click('#resultsBtn');
 await host.waitForSelector('.result');
-await host.click('#pick');
+await host.click('[data-action="random"]');
 await host.waitForTimeout(800);
 const results = await host.$$eval('.overlay .result h4', (els) => els.map((e) => e.textContent));
-console.log('Ergebnisse:', results);
+console.log('Ergebnisse:', results.length, 'Matches');
 await host.screenshot({ path: `${SHOTS}/08-results.png` });
 
 // Trailer-Modal
 await host.locator('.overlay .result [data-trailer]').first().click();
-await host.waitForSelector('iframe.video');
-console.log('Trailer:', await host.getAttribute('iframe.video', 'src'));
+// Manche Titel haben keinen Trailer — dann gibt es einen YouTube-Suchlink
+await host.waitForSelector('iframe.video, .overlay a.btn[href*="youtube.com/results"]');
+console.log('Trailer:', (await host.locator('iframe.video').count())
+  ? await host.getAttribute('iframe.video', 'src')
+  : 'keiner hinterlegt → Suchlink');
+await host.locator('.overlay').last().locator('.close').click();
+
+// Veto: Gast streicht den ersten Volltreffer, Host sieht es live
+await guest.click('#matchBtn');
+await guest.waitForSelector('[data-action="veto"]');
+const vetoed = (await guest.locator('.result:has([data-action="veto"]) h4').first().textContent()).replace(/MATCH|VIELLEICHT/, '');
+await guest.locator('[data-action="veto"]').first().click();
+await host.waitForSelector('.result.vetoed', { timeout: 5000 });
+console.log('Veto von Anna:', vetoed, '→ Host sieht:', (await host.textContent('.result.vetoed .sub')).trim());
+console.log('  Weiteres Veto möglich:', await guest.locator('[data-action="veto"]:not([disabled])').count() > 1 ? 'ja (Fehler!)' : 'nein, Joker verbraucht');
+await host.screenshot({ path: `${SHOTS}/09-veto.png` });
+
+// Finale: Host startet, Gast bekommt es automatisch angezeigt
+await host.click('[data-action="final-start"]');
+await host.waitForSelector('.duel');
+await guest.waitForSelector('.duel', { timeout: 5000 });
+console.log('Finale:', (await host.textContent('.sheet h2')).trim());
+await host.screenshot({ path: `${SHOTS}/10-duel.png` });
+console.log('Duell-Layout:', JSON.stringify(await host.evaluate(() => {
+  const s = document.querySelector('.sheet');
+  const cards = [...document.querySelectorAll('.duel-card')].map((c) => Math.round(c.getBoundingClientRect().width));
+  const img = document.querySelector('.duel-card img').getBoundingClientRect();
+  return { overflowX: s.scrollWidth > s.clientWidth, cards, poster: [Math.round(img.width), Math.round(img.height)], sheetBottom: Math.round(document.querySelector('.duel').getBoundingClientRect().bottom), vh: innerHeight };
+})));
+let duels = 0;
+while (!(await host.locator('.final-winner').count())) {
+  for (const [p, pick] of [[host, 'first'], [guest, duels % 2 ? 'first' : 'last']]) {
+    const cards = p.locator('.duel-card img');
+    if (await cards.count()) {
+      await cards[pick]().click();
+      await p.waitForTimeout(250);
+    }
+  }
+  duels++;
+  await host.waitForTimeout(400);
+  if (duels > 20) throw new Error('Finale endet nicht');
+}
+await guest.waitForSelector('.final-winner', { timeout: 5000 });
+const winner = (await host.textContent('.final-winner h2')).trim();
+console.log(`Finale entschieden nach ${duels} Klickrunden — Sieger: ${winner} (Gast sieht: ${(await guest.textContent('.final-winner h2')).trim()})`);
+console.log('Verlauf:', (await host.locator('.final-winner ~ details li').allTextContents()).join(' | '));
+await host.screenshot({ path: `${SHOTS}/11-winner.png` });
 
 console.log(errors.length ? 'FEHLER:\n' + errors.join('\n') : 'Keine JS-Fehler');
 await browser.close();

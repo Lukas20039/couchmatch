@@ -9,6 +9,9 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
   Datenbank mit ~17.000 Filmen und Serien aus dem freien
   [Cinemeta](https://v3-cinemeta.strem.io)-Katalog auf: IMDb-Bewertung, Genres,
   Laufzeit, Beschreibung, Poster und YouTube-Trailer.
+- **Stimmungs-Vorlagen:** 😂 Leicht & lustig · 💘 Date Night · 😱 Nervenkitzel ·
+  💥 Action · 🔎 Krimi-Abend · 🧠 Was zum Nachdenken · 😢 Zum Mitfühlen ·
+  🛋️ Hirn aus · 🌍 Doku-Abend — füllen Genres, Bewertung und Länge vor.
 - **Vorauswahl:** Filme und/oder Serien · 🔥 Gerade beliebt · 🆕 Neu
   (12 Monate) · ⭐ Top bewertet · 🏛️ All-time Klassiker · 💎 Geheimtipps ·
   Genres rein/raus · Mindestbewertung · Zeitraum · Filmlänge.
@@ -19,6 +22,11 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
   „It's a Match!" erscheint sofort bei allen.
 - **Ergebnis:** Volltreffer und Vielleicht-Matches, sortiert, mit Trailer,
   IMDb-Link und „Wo streamen?" (JustWatch). 🎲 wählt einen Match für euch aus.
+- **🚫 Veto-Joker:** pro Person einstellbar viele — streicht einen Match für
+  alle („den schau ich sicher nicht"), lässt sich zurücknehmen.
+- **🏆 Finale:** zu viele Matches? K.-o.-Duelle „Was lieber?", beide wählen
+  live. Uneinig → höherer Match-Score gewinnt, bei Gleichstand eine Münze —
+  bis genau ein Film übrig bleibt.
 - **Privat:** Stimmen der anderen siehst du nur, wenn daraus ein Match wird.
   Kein Tracking, keine Cookies, keine externen Skripte.
 

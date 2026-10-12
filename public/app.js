@@ -79,6 +79,7 @@ function linksHtml(it) {
 
 function filterSummary(f) {
   const out = [];
+  if (f.mood && META?.moods[f.mood]) out.push('Stimmung: ' + META.moods[f.mood].label);
   out.push(f.types.map((t) => (t === 'movie' ? 'Filme' : 'Serien')).join(' & '));
   if (f.categories?.length) out.push(f.categories.map((c) => CATEGORY_ICON[c] + ' ' + (META?.categories[c] || c)).join(', '));
   if (f.genres?.length) out.push('Genres: ' + f.genres.map(genreDe).join(', '));
@@ -154,17 +155,21 @@ function loading(text) {
 
 // --- Setup ----------------------------------------------------------------
 
+const BASE_EXCLUDES = ['Reality-TV', 'Talk-Show', 'Game-Show'];
+
 const DEFAULT_SETUP = {
+  mood: null,
   types: ['movie', 'series'],
   categories: ['popular', 'toprated'],
   genres: [],
-  excludeGenres: ['Reality-TV', 'Talk-Show', 'Game-Show'],
+  excludeGenres: BASE_EXCLUDES,
   minRating: 6.5,
   yearFrom: '',
   yearTo: '',
   maxRuntime: '',
   count: 50,
   superLimit: 3,
+  vetoLimit: 1,
 };
 
 async function setupPage() {
@@ -195,6 +200,12 @@ async function setupPage() {
       <div class="section">
         <h3>Was soll dabei sein?</h3>
         <div class="chips" id="types"></div>
+      </div>
+
+      <div class="section">
+        <h3>Stimmung</h3>
+        <div class="chips" id="moods"></div>
+        <p class="hint">Füllt Genres, Bewertung und Länge vor — danach frei anpassbar.</p>
       </div>
 
       <div class="section">
@@ -242,6 +253,12 @@ async function setupPage() {
       </div>
 
       <div class="section">
+        <h3>Veto-Joker pro Person</h3>
+        <div class="chips" id="vetos"></div>
+        <p class="hint">Mit einem Veto streicht man einen Match für alle — „den schau ich sicher nicht".</p>
+      </div>
+
+      <div class="section">
         <h3>Dein Name</h3>
         <input class="input" id="name" maxlength="24" placeholder="z. B. Lukas" autocomplete="given-name" />
       </div>
@@ -259,6 +276,12 @@ async function setupPage() {
   const persist = () => localStorage.setItem('couchmatch:setup', JSON.stringify(s));
 
   function renderChips() {
+    q('moods').innerHTML = Object.entries(META.moods)
+      .map(([k, m]) => chip(esc(m.label), s.mood === k ? 'on' : '', `data-mood="${k}"`))
+      .join('');
+    q('vetos').innerHTML = [[0, 'keine'], [1, '1'], [2, '2'], [3, '3']]
+      .map(([n, l]) => chip(l, Number(s.vetoLimit) === n ? 'on' : '', `data-veto="${n}"`))
+      .join('');
     q('types').innerHTML =
       chip('🎬 Filme', 'big ' + (s.types.includes('movie') ? 'on' : ''), 'data-type="movie"') +
       chip('📺 Serien', 'big ' + (s.types.includes('series') ? 'on' : ''), 'data-type="series"');
@@ -286,6 +309,7 @@ async function setupPage() {
   renderChips();
 
   const filters = () => ({
+    mood: s.mood,
     types: s.types,
     categories: s.categories,
     genres: s.genres,
@@ -322,13 +346,29 @@ async function setupPage() {
     const c = e.target.closest('.chip');
     if (!c) return;
     const d = c.dataset;
-    if (d.type) {
+    if (d.mood) {
+      if (s.mood === d.mood) {
+        s.mood = null; // abwählen lässt die Filter stehen
+      } else {
+        const m = META.moods[d.mood];
+        s.mood = d.mood;
+        s.genres = [...m.genres];
+        s.excludeGenres = [...new Set([...BASE_EXCLUDES, ...m.exclude])].filter((g) => !m.genres.includes(g));
+        s.minRating = m.minRating || 0;
+        s.maxRuntime = m.maxRuntime ? String(m.maxRuntime) : '';
+        q('rating').value = s.minRating;
+        q('runtime').value = s.maxRuntime;
+      }
+    } else if (d.veto) {
+      s.vetoLimit = Number(d.veto);
+    } else if (d.type) {
       const has = s.types.includes(d.type);
       if (has && s.types.length === 1) return toast('Mindestens Filme oder Serien');
       s.types = has ? s.types.filter((t) => t !== d.type) : [...s.types, d.type];
     } else if (d.cat) {
       s.categories = s.categories.includes(d.cat) ? s.categories.filter((x) => x !== d.cat) : [...s.categories, d.cat];
     } else if (d.genre) {
+      s.mood = null; // von Hand geändert → keine Vorlage mehr
       const g = d.genre;
       if (s.genres.includes(g)) {
         s.genres = s.genres.filter((x) => x !== g);
@@ -349,11 +389,13 @@ async function setupPage() {
 
   q('rating').addEventListener('input', (e) => {
     s.minRating = Number(e.target.value) || 0;
+    s.mood = null;
     changed();
   });
   for (const [id, key] of [['yearFrom', 'yearFrom'], ['yearTo', 'yearTo'], ['runtime', 'maxRuntime'], ['count', 'count']]) {
     q(id).addEventListener('input', (e) => {
       s[key] = e.target.value;
+      if (key === 'maxRuntime') s.mood = null;
       changed();
     });
   }
@@ -366,7 +408,7 @@ async function setupPage() {
     const count = Math.max(1, Math.min(200, Number(s.count) || 50));
     q('create').disabled = true;
     try {
-      const r = await api('/rooms', { filters: filters(), count, superLimit: s.superLimit, name: name || 'Ich' });
+      const r = await api('/rooms', { filters: filters(), count, superLimit: s.superLimit, vetoLimit: s.vetoLimit, name: name || 'Ich' });
       creds.set(r.roomId, { playerId: r.playerId, token: r.token });
       sessionStorage.setItem('couchmatch:justCreated', r.roomId);
       go('/r/' + r.roomId);
@@ -438,12 +480,16 @@ async function roomPage(roomId) {
   function onState(next) {
     const first = !view;
     view = next;
-    const ids = new Set(view.matches.map((m) => m.id));
     if (knownMatches && !first) {
       const fresh = view.matches.filter((m) => !knownMatches.has(m.id));
-      if (fresh.length) showMatch(fresh[0]);
+      // Ist die Match-Liste offen, nur kurz Bescheid geben statt sie zu überdecken
+      if (fresh.length && liveOpen()) toast(`💘 Neuer Match: ${itemById(fresh[0].id).name}`);
+      else if (fresh.length) showMatch(fresh[0]);
     }
-    knownMatches = ids;
+    // Merken statt ersetzen, damit ein zurückgenommenes Veto nicht erneut "It's a Match!" auslöst
+    knownMatches = new Set([...(knownMatches || []), ...view.matches.map((m) => m.id)]);
+    if (!first) notifyFinal(prevFinal, view.final);
+    prevFinal = view.final;
     if (first) {
       buildShell();
       if (sessionStorage.getItem('couchmatch:justCreated') === roomId) {
@@ -452,6 +498,17 @@ async function roomPage(roomId) {
       }
     }
     render();
+    if (liveOpen()) live.refresh();
+  }
+
+  let prevFinal = null;
+  function notifyFinal(before, after) {
+    if (!before && after) {
+      toast('🏆 Das Finale hat begonnen!');
+      if (!remaining().length && !liveOpen('final')) showFinal();
+    } else if (after?.winner && !before?.winner && !liveOpen('final')) {
+      toast(`🏆 Gewinner: ${itemById(after.winner).name}`);
+    }
   }
 
   const myVotes = () => view.me.votes;
@@ -469,6 +526,7 @@ async function roomPage(roomId) {
           <a class="brand" href="/">couchmatch</a>
           <span class="spacer"></span>
           <button class="pill" id="shareBtn" title="Einladen">🔗 Einladen</button>
+          <button class="pill match" id="finalBtn" hidden>🏆</button>
           <button class="pill" id="matchBtn">💘 0</button>
         </div>
         <div class="progress"><div id="bar"></div></div>
@@ -486,6 +544,7 @@ async function roomPage(roomId) {
       </div>`;
     document.getElementById('shareBtn').onclick = showInvite;
     document.getElementById('matchBtn').onclick = showResults;
+    document.getElementById('finalBtn').onclick = showFinal;
     $app.querySelector('.actions').addEventListener('click', (e) => {
       const b = e.target.closest('[data-act]');
       if (!b) return;
@@ -518,6 +577,7 @@ async function roomPage(roomId) {
     const mb = document.getElementById('matchBtn');
     mb.textContent = `💘 ${strong}`;
     mb.classList.toggle('match', strong > 0);
+    document.getElementById('finalBtn').hidden = !view.final;
     document.getElementById('players').innerHTML = view.players
       .map((p) => `<span class="pill">${p.id === view.me.id ? 'Du' : esc(p.name)} · ${Math.min(p.voted, total)}/${total}</span>`)
       .join('');
@@ -754,7 +814,7 @@ async function roomPage(roomId) {
         <a class="btn" style="flex:1;background:#25d366;color:#fff" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">WhatsApp</a>
       </div>
       <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px">Diese Session</h3>
-      <ul class="summary-list">${filterSummary(view.filters).map((x) => `<li>${esc(x)}</li>`).join('')}<li>${view.items.length} Titel · Super-Likes: ${view.superLimit || 'unbegrenzt'}</li></ul>
+      <ul class="summary-list">${filterSummary(view.filters).map((x) => `<li>${esc(x)}</li>`).join('')}<li>${view.items.length} Titel · Super-Likes: ${view.superLimit || 'unbegrenzt'} · Veto-Joker: ${view.vetoLimit || 'keine'}</li></ul>
       <button class="btn block" data-close style="margin-top:18px">Los swipen</button>`);
     ov.querySelector('#doShare').onclick = () => share(url, 'Lass uns gemeinsam einen Film aussuchen 🍿');
   }
@@ -765,7 +825,12 @@ async function roomPage(roomId) {
       .join(' · ');
   }
 
-  function resultRow(it, m, picked) {
+  const nameOf = (playerId) =>
+    playerId === view.me.id ? 'Du' : esc(view.players.find((p) => p.id === playerId)?.name || '?');
+  const myVetoes = () => view.vetoes.filter((v) => v.by === view.me.id).length;
+  const vetoesLeft = () => view.vetoLimit - myVetoes();
+
+  function resultRow(it, m, { picked = false, actions = '' } = {}) {
     return `
       <div class="result${picked ? ' picked' : ''}" id="res-${esc(it.id)}">
         <img src="${esc(it.poster)}" alt="" loading="lazy" />
@@ -774,45 +839,236 @@ async function roomPage(roomId) {
           <div class="sub">${[it.rating ? `IMDb ${it.rating.toFixed(1)}` : null, ...itemMeta(it)].filter(Boolean).map(esc).join(' · ')}</div>
           <div class="sub">${it.genres.map(genreDe).map(esc).join(', ')}</div>
           ${m ? `<div class="who">${voteBadges(m)}</div>` : ''}
-          <div class="links">${linksHtml(it)}</div>
+          <div class="links">${linksHtml(it)}${actions}</div>
         </div>
       </div>`;
   }
 
-  function showResults(pickedId = null) {
-    if (typeof pickedId !== 'string') pickedId = null;
+  // --- Live-Ansichten: werden bei jedem Server-Update neu gezeichnet --------
+
+  let live = null; // { kind, ov, refresh }
+  const liveOpen = (kind) => live && document.body.contains(live.ov) && (!kind || live.kind === kind);
+
+  function openLive(kind, renderFn) {
+    const ov = overlay(`<div class="sheet-body"></div>`);
+    live = { kind, ov, refresh: () => (ov.querySelector('.sheet-body').innerHTML = renderFn()) };
+    live.refresh();
+    ov.addEventListener('click', onLiveClick);
+  }
+
+  async function act(path, body) {
+    try {
+      await api(`/rooms/${roomId}/${path}`, { ...c, ...body });
+      return true;
+    } catch (err) {
+      toast(err.message);
+      return false;
+    }
+  }
+
+  async function onLiveClick(e) {
+    if (e.target.closest('[data-trailer]')) return; // Trailer öffnet der Overlay-Handler
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const { action, id, duel } = el.dataset;
+    if (action === 'invite') showInvite();
+    else if (action === 'random') pickRandom();
+    else if (action === 'open-final') showFinal();
+    else if (action === 'open-results') showResults();
+    else if (action === 'veto') {
+      el.disabled = true;
+      if (await act('veto', { itemId: id })) toast(view.vetoes.some((v) => v.id === id) ? 'Veto eingelegt 🚫' : 'Veto zurückgenommen');
+    } else if (action === 'final-start') {
+      el.disabled = true;
+      if (await act('final', { action: 'start' })) showFinal();
+    } else if (action === 'final-reset') {
+      if (confirm('Finale für alle zurücksetzen?')) await act('final', { action: 'reset' });
+    } else if (action === 'pick') {
+      // sofort zum nächsten Duell, der Server bestätigt per Live-Update
+      const d = view.final?.rounds.at(-1)?.duels[duel];
+      if (!d || d.winner) return;
+      d.picks[view.me.id] = id;
+      d.picked = [...new Set([...d.picked, view.me.id])];
+      live.refresh();
+      await act('final', { action: 'pick', duel: Number(duel), itemId: id });
+    }
+  }
+
+  let resultsPicked = null;
+
+  function pickRandom() {
+    const strong = view.matches.filter((m) => m.strong);
+    const pool = strong.length ? strong : view.matches;
+    const total = pool.reduce((s, m) => s + m.score, 0);
+    let r = Math.random() * total;
+    const chosen = pool.find((m) => (r -= m.score) < 0) || pool[0];
+    resultsPicked = chosen.id;
+    live.refresh();
+    document.getElementById('res-' + chosen.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toast(`Heute: ${itemById(chosen.id).name} 🍿`);
+  }
+
+  function showResults() {
+    resultsPicked = null;
+    openLive('results', renderResults);
+  }
+
+  function renderResults() {
     const strong = view.matches.filter((m) => m.strong);
     const weak = view.matches.filter((m) => !m.strong);
     const matchedIds = new Set(view.matches.map((m) => m.id));
-    const mineOnly = view.items.filter((i) => ['like', 'super'].includes(myVotes()[i.id]) && !matchedIds.has(i.id));
-    const row = (m) => resultRow(itemById(m.id), m, m.id === pickedId);
+    const vetoedIds = new Set(view.vetoes.map((v) => v.id));
+    const mineOnly = view.items.filter(
+      (i) => ['like', 'super'].includes(myVotes()[i.id]) && !matchedIds.has(i.id) && !vetoedIds.has(i.id),
+    );
+    const canVeto = view.vetoLimit > 0 && !view.final;
+    const vetoBtn = (m) =>
+      canVeto
+        ? `<button class="btn veto" data-action="veto" data-id="${esc(m.id)}" ${vetoesLeft() > 0 ? '' : 'disabled'}>🚫 Veto</button>`
+        : '';
+    const row = (m) => resultRow(itemById(m.id), m, { picked: m.id === resultsPicked, actions: vetoBtn(m) });
+
+    let finalBlock = '';
+    if (view.final?.winner) {
+      const w = itemById(view.final.winner);
+      finalBlock = `<button class="btn primary block" data-action="open-final">🏆 Finale-Sieger: ${esc(w.name)}</button>`;
+    } else if (view.final) {
+      finalBlock = `<button class="btn primary block" data-action="open-final">🏆 Zum laufenden Finale</button>`;
+    } else if (view.matches.length >= 2) {
+      const n = Math.min(8, strong.length >= 2 ? strong.length : view.matches.length);
+      finalBlock = `
+        <button class="btn primary block" data-action="final-start">🏆 Finale starten (${n} Titel)</button>
+        <p class="hint" style="text-align:center">Duelle „Was lieber?", bis einer übrig bleibt — ihr wählt beide.</p>`;
+    }
 
     const body = !others().length
       ? `<p style="color:var(--muted)">Noch niemand beigetreten. Sobald dein:e Mitschauer:in über den Link mitswipt, erscheinen hier eure Matches.</p>
-         <button class="btn primary" id="inv">🔗 Einladen</button>`
+         <button class="btn primary" data-action="invite">🔗 Einladen</button>`
       : !view.matches.length
         ? `<p style="color:var(--muted)">Noch keine Matches. ${remaining().length ? 'Swipe weiter!' : 'Holt euch noch ein paar Titel dazu.'}</p>`
         : `
-          <button class="btn primary block" id="pick">🎲 Zufällig einen Match auswählen</button>
+          ${finalBlock}
+          <button class="btn block" data-action="random" style="margin-top:8px">🎲 Zufällig einen Match auswählen</button>
+          ${canVeto ? `<p class="hint" style="text-align:center">Veto-Joker: noch ${vetoesLeft()} von ${view.vetoLimit}</p>` : ''}
           ${strong.length ? `<h3 style="margin:20px 0 0">Volltreffer (${strong.length})</h3>${strong.map(row).join('')}` : ''}
           ${weak.length ? `<h3 style="margin:20px 0 0">Vielleicht (${weak.length})</h3><p class="hint">Mindestens eine:r fand's nur „interessant".</p>${weak.map(row).join('')}` : ''}`;
 
-    const ov = overlay(`
-      <h2 style="margin:4px 0 4px">💘 Eure Matches</h2>
-      <p style="color:var(--muted);margin:0 0 14px">${view.players.map((p) => `${p.id === view.me.id ? 'Du' : esc(p.name)}: ${Math.min(p.voted, view.items.length)}/${view.items.length}`).join(' · ')}</p>
-      ${body}
-      ${mineOnly.length ? `<details style="margin-top:16px"><summary>Nur du magst (${mineOnly.length})</summary>${mineOnly.map((it) => resultRow(it, null)).join('')}</details>` : ''}`);
+    const vetoed = view.vetoes.length
+      ? `<h3 style="margin:20px 0 0">Per Veto gestrichen (${view.vetoes.length})</h3>
+         ${view.vetoes
+           .map(({ id, by }) => {
+             const it = itemById(id);
+             const undo = by === view.me.id && !view.final
+               ? `<button class="btn" data-action="veto" data-id="${esc(id)}">↶ Zurücknehmen</button>`
+               : '';
+             return `<div class="result vetoed"><img src="${esc(it.poster)}" alt="" loading="lazy" /><div class="meta"><h4>${esc(it.name)}</h4><div class="sub">🚫 Veto von ${nameOf(by)}</div><div class="links">${undo}</div></div></div>`;
+           })
+           .join('')}`
+      : '';
 
-    ov.querySelector('#inv')?.addEventListener('click', showInvite);
-    ov.querySelector('#pick')?.addEventListener('click', () => {
-      const pool = strong.length ? strong : weak;
-      const total = pool.reduce((s, m) => s + m.score, 0);
-      let r = Math.random() * total;
-      const chosen = pool.find((m) => (r -= m.score) < 0) || pool[0];
-      showResults(chosen.id);
-      document.getElementById('res-' + chosen.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      toast(`Heute: ${itemById(chosen.id).name} 🍿`);
+    return `
+      <h2 style="margin:4px 0 4px">💘 Eure Matches</h2>
+      <p style="color:var(--muted);margin:0 0 14px">${view.players.map((p) => `${nameOf(p.id)}: ${Math.min(p.voted, view.items.length)}/${view.items.length}`).join(' · ')}</p>
+      ${body}
+      ${vetoed}
+      ${mineOnly.length ? `<details style="margin-top:16px"><summary>Nur du magst (${mineOnly.length})</summary>${mineOnly.map((it) => resultRow(it, null)).join('')}</details>` : ''}`;
+  }
+
+  // --- Finale ----------------------------------------------------------------
+
+  const DECIDED = {
+    unanimous: 'einstimmig',
+    majority: 'Mehrheit',
+    score: 'uneinig → höherer Match-Score',
+    random: 'uneinig → Münzwurf',
+  };
+
+  function showFinal() {
+    openLive('final', renderFinal);
+  }
+
+  function duelHistory(f) {
+    const rows = [];
+    f.rounds.forEach((r, ri) => {
+      for (const d of r.duels) {
+        if (!d.winner) continue;
+        const loser = d.winner === d.a ? d.b : d.a;
+        const picks = Object.entries(d.picks).map(([p, id]) => `${nameOf(p)}: ${esc(itemById(id).name)}`).join(' · ');
+        rows.push(`<li><b>${esc(itemById(d.winner).name)}</b> schlägt ${esc(itemById(loser).name)} <span class="hint">(${DECIDED[d.decidedBy]}${picks ? ' — ' + picks : ''})</span></li>`);
+      }
+      if (r.bye && ri < f.rounds.length - 1) rows.push(`<li>${esc(itemById(r.bye).name)} <span class="hint">kampflos weiter</span></li>`);
     });
+    return rows.length ? `<details style="margin-top:18px"><summary>Bisherige Duelle (${rows.length})</summary><ul class="summary-list">${rows.join('')}</ul></details>` : '';
+  }
+
+  function renderFinal() {
+    const f = view.final;
+    if (!f) return `<p style="color:var(--muted)">Das Finale wurde zurückgesetzt.</p><button class="btn" data-action="open-results">💘 Zu den Matches</button>`;
+    const totalRounds = Math.ceil(Math.log2(f.entries.length));
+
+    if (f.winner) {
+      const w = itemById(f.winner);
+      return `
+        <div class="final-winner">
+          <div class="trophy">🏆</div>
+          <p class="hint" style="margin:0">Heute schauen wir</p>
+          <img src="${esc(w.poster)}" alt="" />
+          <h2>${esc(w.name)}</h2>
+          <div class="sub">${[w.rating ? `IMDb ${w.rating.toFixed(1)}` : null, ...itemMeta(w)].filter(Boolean).map(esc).join(' · ')}</div>
+          <div class="links" style="justify-content:center">${linksHtml(w)}</div>
+        </div>
+        ${duelHistory(f)}
+        <div class="row" style="margin-top:18px">
+          <button class="btn" style="flex:1" data-action="final-reset">↺ Neues Finale</button>
+          <button class="btn" style="flex:1" data-action="open-results">💘 Matches</button>
+        </div>`;
+    }
+
+    const roundNo = f.rounds.length;
+    const round = f.rounds.at(-1);
+    const isLast = round.duels.length === 1 && !round.bye;
+    const title = isLast ? 'Endspiel' : `Runde ${roundNo} von ${totalRounds}`;
+    const myIdx = round.duels.findIndex((d) => !d.winner && !d.picks[view.me.id]);
+    const byeNote = round.bye ? `<p class="hint" style="text-align:center">${esc(itemById(round.bye).name)} kommt diese Runde kampflos weiter.</p>` : '';
+
+    let main;
+    if (myIdx >= 0) {
+      const d = round.duels[myIdx];
+      const card = (id) => {
+        const it = itemById(id);
+        return `
+          <button class="duel-card" data-action="pick" data-duel="${myIdx}" data-id="${esc(id)}">
+            <img src="${esc(it.poster)}" alt="" />
+            <b>${esc(it.name)}</b>
+            <span class="sub">${[it.year, it.rating ? `IMDb ${it.rating.toFixed(1)}` : null].filter(Boolean).join(' · ')}</span>
+            <span class="btn small trailer" data-trailer="${esc(id)}">▶ Trailer</span>
+          </button>`;
+      };
+      main = `
+        <p class="hint" style="text-align:center;margin:0 0 10px">Duell ${myIdx + 1} von ${round.duels.length} — tippe auf deinen Favoriten</p>
+        <div class="duel">${card(d.a)}<div class="vs">vs</div>${card(d.b)}</div>`;
+    } else {
+      const waiting = view.players.filter((p) => round.duels.some((d) => !d.winner && !d.picked.includes(p.id)));
+      main = `
+        <div class="empty-inline">
+          <div class="spinner"></div>
+          <p>Du hast gewählt. Warte auf ${waiting.map((p) => esc(p.name)).join(', ') || '…'}</p>
+        </div>
+        <ul class="summary-list">${round.duels
+          .map((d) => `<li>${esc(itemById(d.a).name)} vs ${esc(itemById(d.b).name)} — ${d.winner ? `✓ ${esc(itemById(d.winner).name)}` : `${d.picked.length}/${view.players.length} gewählt`}</li>`)
+          .join('')}</ul>`;
+    }
+
+    return `
+      <h2 style="margin:4px 0 2px">🏆 Finale · ${title}</h2>
+      <p style="color:var(--muted);margin:0 0 14px">Was lieber? Bei Uneinigkeit entscheidet der Match-Score, bei Gleichstand eine Münze.</p>
+      ${main}
+      ${byeNote}
+      ${duelHistory(f)}
+      <div class="row" style="margin-top:18px">
+        <button class="btn small" data-action="open-results">💘 Matches</button>
+        <button class="btn small" data-action="final-reset">✕ Finale abbrechen</button>
+      </div>`;
   }
 
   function showMatch(m) {
