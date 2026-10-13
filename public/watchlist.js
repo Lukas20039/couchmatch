@@ -323,9 +323,10 @@ export async function watchlistPage(listId) {
     let type = 'movie';
     const ov = sheet(`
       <h2 style="margin:4px 0 6px">✍️ Selbst eintragen</h2>
-      <p class="sub" style="margin:0 0 14px">Für alles, was die Suche nicht kennt. Mit IMDb-Link wird daraus ein Eintrag mit Poster und Infos, falls der Titel bekannt ist.</p>
+      <p class="sub" style="margin:0 0 14px">Beim Tippen schauen wir in der Datenbank nach — ein Treffer übernimmt Poster und Infos. Sonst einfach frei eintragen.</p>
       <form class="form" id="manualForm">
-        <div class="field"><label for="mName">Titel</label><input class="input" id="mName" maxlength="120" required value="${esc(term)}" /></div>
+        <div class="field"><label for="mName">Titel</label><input class="input" id="mName" maxlength="120" required value="${esc(term)}" autocomplete="off" />
+          <div class="search-results" id="mHits"></div></div>
         <div class="chips" id="mType">
           <button type="button" class="chip on" data-type="movie">🎬 Film</button>
           <button type="button" class="chip" data-type="series">📺 Serie</button>
@@ -337,6 +338,46 @@ export async function watchlistPage(listId) {
         <div class="field"><label for="mNote">Notiz (optional)</label><input class="input" id="mNote" maxlength="300" placeholder="z. B. „läuft auf Arte", „Tipp von Mama"" /></div>
         <button class="btn primary block">Hinzufügen</button>
       </form>`);
+    // Datenbank-Treffer zum eingetippten Titel
+    const hits = ov.querySelector('#mHits');
+    const lookup = debounce(async () => {
+      const t = ov.querySelector('#mName').value.trim();
+      if (t.length < 2) return (hits.innerHTML = '');
+      try {
+        const { results } = await api(`/search?q=${encodeURIComponent(t)}`);
+        if (ov.querySelector('#mName').value.trim() !== t) return;
+        const have = new Set(data.entries.map((e) => e.item.id));
+        hits.innerHTML = results.slice(0, 6).map((it) => `
+          <div class="hit">
+            <img src="${esc(it.poster)}" alt="" loading="lazy" />
+            <div class="grow"><b>${esc(it.name)}</b><div class="sub">${itemMeta(it).map(esc).join(' · ')}${it.rating ? ` · IMDb ${it.rating.toFixed(1)}` : ''}</div></div>
+            ${have.has(it.id) ? '<span class="sub">✓ drauf</span>' : `<button type="button" class="btn small primary" data-pick="${esc(it.id)}">Übernehmen</button>`}
+          </div>`).join('') + (results.length ? '<p class="hint" style="padding:6px 12px;margin:0">Nicht dabei? Dann unten frei eintragen.</p>' : '');
+      } catch {
+        hits.innerHTML = '';
+      }
+    }, 250);
+    ov.querySelector('#mName').addEventListener('input', lookup);
+    lookup();
+    hits.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-pick]');
+      if (!b) return;
+      b.disabled = true;
+      try {
+        const { entryId } = await api(`/lists/${listId}/items`, { itemId: b.dataset.pick, priority: 2 });
+        // Eine eingetippte Notiz wird zum ersten Kommentar
+        const note = ov.querySelector('#mNote').value.trim();
+        if (note && partner()) await api(`/entries/${entryId}`, { action: 'comment', text: note });
+        ov.remove();
+        q('search').value = '';
+        q('results').innerHTML = '';
+        toast(partner() ? `📌 Hinzugefügt — ${partner().name} bekommt Bescheid` : '📌 Hinzugefügt');
+        await reload();
+      } catch (err) {
+        toast(err.message);
+        b.disabled = false;
+      }
+    });
     ov.querySelector('#mType').addEventListener('click', (e) => {
       const b = e.target.closest('[data-type]');
       if (!b) return;

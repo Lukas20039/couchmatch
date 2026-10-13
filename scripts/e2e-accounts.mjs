@@ -176,6 +176,14 @@ await anna.screenshot({ path: `${SHOTS}/22-manual.png` });
 await anna.click('#manualForm .btn.primary');
 await anna.waitForSelector('.entry:has-text("Omas Lieblingsfilm") .tag.manual');
 check('selbst eingetragener Titel mit Platzhalter-Poster', (await anna.getAttribute('.entry:has-text("Omas Lieblingsfilm") img', 'src')).startsWith('/api/poster.svg'));
+// Auch im Selbst-eintragen-Dialog wird die Datenbank durchsucht
+await anna.click('#manualBtn');
+await anna.fill('#mName', 'The Matrix');
+await anna.waitForSelector('#mHits [data-pick]');
+await anna.screenshot({ path: `${SHOTS}/22b-manual-search.png` });
+await anna.click('#mHits .hit:has(b:text-is("The Matrix")) [data-pick]');
+await anna.waitForSelector('.entry:has-text("The Matrix")');
+check('Treffer aus dem Dialog übernommen (mit echtem Poster)', !(await anna.getAttribute('.entry:has-text("The Matrix") img', 'src')).startsWith('/api/'));
 
 await lukas.goto(BASE + '/konto');
 await lukas.waitForSelector('.list-card .badge-new', { timeout: 5000 });
@@ -184,7 +192,7 @@ await lukas.click('.list-card:has-text("Du & Anna")');
 await lukas.waitForSelector('[data-tab="activity"] .dot');
 await lukas.click('[data-tab="activity"]');
 await lukas.waitForSelector('.activity.unread');
-check('Verlauf zeigt Annas Eintrag als ungelesen', (await lukas.textContent('.activity.unread')).includes('Omas Lieblingsfilm'));
+check('Verlauf zeigt Annas Eintrag als ungelesen', (await lukas.locator('.activity.unread:has-text("Omas Lieblingsfilm")').count()) === 1);
 await lukas.click('.activity:has-text("Omas Lieblingsfilm") [data-picker]');
 await lukas.click('.react-picker [data-react="😂"]');
 await lukas.waitForSelector('.activity:has-text("Omas Lieblingsfilm") .react.on');
@@ -217,7 +225,7 @@ await anna.click('.activity:has(.bubble) [data-picker]');
 await anna.click('.react-picker [data-react="❤️"]');
 await anna.waitForSelector('.activity:has(.bubble) .react.on');
 await anna.screenshot({ path: `${SHOTS}/24-activity.png`, fullPage: true });
-check('Session aus der Watchlist ohne Veto-Titel', (await anna.textContent('[data-act="session"]')).includes('(7)'));
+check('Session aus der Watchlist ohne Veto-Titel', (await anna.textContent('[data-act="session"]')).includes('(8)'));
 
 console.log('10. Admin & Push-Bereich');
 await lukas.goto(BASE + '/konto');
