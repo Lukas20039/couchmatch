@@ -36,8 +36,22 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
   gemeinsame. Beide bewerten jeden Titel mit einer Wichtigkeit
   (👎 eher nicht · 🙂 gern mal · 😍 will ich · 🔥 unbedingt) — oben steht,
   worauf ihr beide am meisten Lust habt, 💞 markiert gemeinsame Favoriten.
-  Titel kommen per Suche dazu oder mit 📌 direkt aus einer Session
-  („Alle Volltreffer merken").
+  Titel kommen per Suche dazu, mit 📌 direkt aus einer Session
+  („Alle Volltreffer merken") oder ✍️ selbst eingetragen (Name, Jahr,
+  optional IMDb-Link) — auch was der Katalog nicht kennt.
+- **Pro Titel:** 🚫 Veto (fliegt aus Zufallstipp und gemeinsamen Sessions,
+  zurücknehmbar) und 💬 Kommentare.
+- **Aktivität:** ein Verlauf pro Watchlist mit „neu"-Markierung — hinzugefügt,
+  kommentiert, Veto, gesehen, Sterne. Auf alles lässt sich mit Smileys
+  reagieren (❤️ 😂 😍 🔥 👍 👎 😱 🙄 🍿).
+- **🔔 Push-Benachrichtigungen** (Web Push, ohne Fremddienst-Konto): wenn
+  dein Gegenüber etwas hinzufügt, kommentiert, ein Veto einlegt oder
+  reagiert, bei Anfragen und Session-Einladungen. Mehrere Titel auf einmal
+  werden zu einer Nachricht gebündelt. Auf iPhone/iPad erst „Zum
+  Home-Bildschirm" hinzufügen.
+- **📊 Admin-Statistik** unter `/admin`: Konten, aktive Nutzer, Paare,
+  Watchlists, Sessions, Verlauf pro Tag, meistgemerkte Titel — ohne Inhalte
+  einzelner Listen.
 - **Aus der Watchlist:** 🎬 eine Session nur aus euren offenen Titeln
   (inkl. Veto & Finale) oder 🎲 „Was schauen wir heute?" — gewichteter Zufall,
   „eher nicht" bleibt außen vor. Gesehenes bekommt ⭐ Sterne von beiden und
@@ -160,12 +174,18 @@ location / {
 | `HOST`     | `0.0.0.0` | Bind-Adresse                                   |
 | `DATA_DIR` | `/data`   | Film-Datenbank (`catalog.json`), Sessions (`rooms.json`), Konten & Watchlists (`couchmatch.db`) |
 | `SIGNUP`   | `open`    | `closed` = keine neuen Konten (bestehende melden sich weiter an) |
+| `ADMIN_USERS` | —      | Benutzernamen mit Zugriff auf `/admin`, kommagetrennt. Ohne Angabe ist das erste angelegte Konto Admin |
+| `VAPID_SUBJECT` | Projekt-URL | Kontakt für Push-Dienste (`mailto:…` oder `https://…`) |
 
 Alles liegt in einem Container und einem Volume — Konten und Watchlists in
 einer SQLite-Datei (über das in Node eingebaute `node:sqlite`, kein extra
 Datenbank-Container). Passwörter werden mit scrypt gehasht; Anmeldungen
 gelten 180 Tage. Läuft couchmatch hinter HTTPS, setzt der Reverse Proxy
 `X-Forwarded-Proto: https`, damit das Cookie als `Secure` markiert wird.
+
+Push-Benachrichtigungen brauchen HTTPS (oder `localhost`). Die Schlüssel dafür
+(`vapid.json`) entstehen beim ersten Start im Volume — geht die Datei
+verloren, muss Push auf jedem Gerät neu aktiviert werden.
 
 Sessions werden nach 30 Tagen ohne Aktivität verworfen. Die Film-Datenbank
 aktualisiert sich täglich von selbst. Backup = das Volume `/data` sichern
@@ -188,7 +208,7 @@ npm start
 
 ```sh
 npm start                 # startet auf :8095, Daten in ./data
-npm test                  # Match-Logik, Veto, Finale, Filter, Konten, Watchlists
+npm test                  # Match-Logik, Veto, Finale, Filter, Konten, Watchlists, Push
 npm run smoke             # API-Durchlauf mit zwei Spielern gegen laufenden Server
 # UI-Test mit zwei simulierten Handys (braucht Playwright + Chromium):
 PLAYWRIGHT=…/playwright-core/index.mjs CHROMIUM=…/chrome node scripts/e2e.mjs
@@ -201,7 +221,8 @@ PLAYWRIGHT=… CHROMIUM=… node scripts/e2e-accounts.mjs
 | `server.js`       | HTTP-Server, API, Live-Stream (SSE), statische Dateien   |
 | `lib/catalog.js`  | Katalog-Crawl, Kategorien, Filter                        |
 | `lib/rooms.js`    | Sessions, Stimmen, Matches, Veto, Finale                 |
-| `lib/accounts.js` | SQLite: Konten, Anmeldung, Verbindungen, Watchlists      |
+| `lib/accounts.js` | SQLite: Konten, Verbindungen, Watchlists, Verlauf, Statistik |
+| `lib/push.js`     | Web Push: VAPID-Signatur, Verschlüsselung (RFC 8291), Texte |
 | `public/`         | Frontend (Vanilla JS, kein Build-Schritt)                |
 
 Jeder Push auf `main` baut und veröffentlicht `:latest`; ein Tag `v1.2.3`

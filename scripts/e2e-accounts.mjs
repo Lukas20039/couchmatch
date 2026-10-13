@@ -19,7 +19,8 @@ const check = (label, ok) => {
 async function phoneFor(who) {
   const page = await (await browser.newContext(phone)).newPage();
   page.on('pageerror', (e) => errors.push(`${who}: ${e.stack?.split('\n').slice(0, 3).join(' | ')}`));
-  page.on('console', (m) => m.type() === 'error' && errors.push(`${who} console: ${m.text()}`));
+  // 403 ist erwartet, wenn Anna die Statistik aufruft
+  page.on('console', (m) => m.type() === 'error' && !m.text().includes('status of 403') && errors.push(`${who} console: ${m.text()}`));
   return page;
 }
 
@@ -159,6 +160,79 @@ await lukas.goto(BASE + '/konto');
 await lukas.waitForSelector('#dyn .item-row');
 await lukas.screenshot({ path: `${SHOTS}/21-konto.png`, fullPage: true });
 check('Lukas hat Einladung zur Watchlist-Session', (await lukas.textContent('#dyn')).includes('lädt dich zu einer Session ein'));
+
+console.log('8. Selbst eintragen, Verlauf, Reaktionen');
+await anna.goto(BASE + '/konto');
+await anna.click('.list-card:has-text("Du & Lukas")');
+await anna.waitForSelector('#manualBtn');
+await anna.fill('#search', 'Omas Lieblingsfilm');
+await anna.waitForSelector('#results [data-manual]');
+await anna.click('#results [data-manual]');
+await anna.waitForSelector('#manualForm');
+check('Titel aus der Suche vorausgefüllt', (await anna.inputValue('#mName')) === 'Omas Lieblingsfilm');
+await anna.fill('#mYear', '1987');
+await anna.fill('#mNote', 'läuft Sonntag auf Arte');
+await anna.screenshot({ path: `${SHOTS}/22-manual.png` });
+await anna.click('#manualForm .btn.primary');
+await anna.waitForSelector('.entry:has-text("Omas Lieblingsfilm") .tag.manual');
+check('selbst eingetragener Titel mit Platzhalter-Poster', (await anna.getAttribute('.entry:has-text("Omas Lieblingsfilm") img', 'src')).startsWith('/api/poster.svg'));
+
+await lukas.goto(BASE + '/konto');
+await lukas.waitForSelector('.list-card .badge-new', { timeout: 5000 });
+check('Lukas sieht „neu"-Hinweis an der Liste', (await lukas.textContent('.list-card .badge-new')).includes('neu'));
+await lukas.click('.list-card:has-text("Du & Anna")');
+await lukas.waitForSelector('[data-tab="activity"] .dot');
+await lukas.click('[data-tab="activity"]');
+await lukas.waitForSelector('.activity.unread');
+check('Verlauf zeigt Annas Eintrag als ungelesen', (await lukas.textContent('.activity.unread')).includes('Omas Lieblingsfilm'));
+await lukas.click('.activity:has-text("Omas Lieblingsfilm") [data-picker]');
+await lukas.click('.react-picker [data-react="😂"]');
+await lukas.waitForSelector('.activity:has-text("Omas Lieblingsfilm") .react.on');
+
+console.log('9. Kommentar & Veto in der Detailansicht');
+await lukas.click('[data-tab="open"]');
+await lukas.click('.entry:has-text("Interstellar") h4');
+await lukas.waitForSelector('#commentForm');
+await lukas.fill('#commentText', 'Nur mit Taschentüchern 😭');
+await lukas.press('#commentText', 'Enter');
+await lukas.waitForSelector('.thread .bubble:has-text("Taschentüchern")');
+check('Kommentar erscheint im Thread', true);
+await lukas.locator('.overlay .close').click();
+await lukas.click('.entry:has-text("Heat") h4');
+await lukas.waitForSelector('.overlay [data-act="veto"]');
+lukas.once('dialog', (d) => d.accept());
+await lukas.click('.overlay [data-act="veto"]');
+await lukas.waitForSelector('.overlay [data-act="unveto"]');
+check('Veto eingelegt, eigenes Veto zurücknehmbar', true);
+await lukas.screenshot({ path: `${SHOTS}/23-detail.png` });
+await lukas.locator('.overlay .close').click();
+check('Veto-Eintrag ist ausgegraut', (await lukas.locator('.entry.vetoed:has-text("Heat")').count()) === 1);
+
+await anna.goto(BASE + '/w/' + (await lukas.evaluate(() => location.pathname.split('/')[2])) + '?tab=activity');
+await anna.waitForSelector('.activity .bubble:has-text("Taschentüchern")');
+check('Anna sieht Kommentar und Veto im Verlauf', (await anna.textContent('#entries')).includes('Veto gegen'));
+const reacted = anna.locator('.activity:has-text("Omas Lieblingsfilm") .react.on, .activity:has-text("Omas Lieblingsfilm") .react');
+check('Lukas\' Reaktion ist bei Anna sichtbar', (await reacted.first().textContent()).includes('😂'));
+await anna.click('.activity:has(.bubble) [data-picker]');
+await anna.click('.react-picker [data-react="❤️"]');
+await anna.waitForSelector('.activity:has(.bubble) .react.on');
+await anna.screenshot({ path: `${SHOTS}/24-activity.png`, fullPage: true });
+check('Session aus der Watchlist ohne Veto-Titel', (await anna.textContent('[data-act="session"]')).includes('(7)'));
+
+console.log('10. Admin & Push-Bereich');
+await lukas.goto(BASE + '/konto');
+await lukas.waitForSelector('#push');
+check('Push-Bereich vorhanden', (await lukas.textContent('#push')).length > 10);
+check('Admin-Link für das erste Konto', (await lukas.locator('a[href="/admin"]').count()) === 1);
+check('kein Admin-Link für Anna', await anna.goto(BASE + '/konto').then(() => anna.waitForSelector('#dyn .list-card')).then(async () => (await anna.locator('a[href="/admin"]').count()) === 0));
+await lukas.click('a[href="/admin"]');
+await lukas.waitForSelector('.tiles');
+const tiles = await lukas.$$eval('.tile', (els) => Object.fromEntries(els.map((e) => [e.querySelector('.tile-label').textContent, e.querySelector('.tile-value').textContent])));
+check(`Statistik: ${tiles.Konten} Konten, ${tiles.Paare} Paar, ${tiles.Kommentare} Kommentar`, tiles.Konten === '2' && tiles.Paare === '1' && tiles.Kommentare === '1');
+await lukas.screenshot({ path: `${SHOTS}/25-admin.png`, fullPage: true });
+await anna.goto(BASE + '/admin');
+await anna.waitForSelector('.center-screen');
+check('Anna bekommt keine Statistik', (await anna.textContent('.center-screen')).includes('Nur für Admins'));
 
 await browser.close();
 const failed = checks.filter(([, ok]) => !ok);

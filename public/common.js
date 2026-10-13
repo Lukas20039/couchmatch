@@ -73,7 +73,7 @@ function itemMeta(it) {
 function linksHtml(it) {
   return `
     <button class="btn trailer" data-trailer="${esc(it.id)}">▶ Trailer</button>
-    <a class="btn" href="${imdbUrl(it)}" target="_blank" rel="noopener">IMDb</a>
+    ${/^tt\d+$/.test(it.id) ? `<a class="btn" href="${imdbUrl(it)}" target="_blank" rel="noopener">IMDb</a>` : ''}
     <a class="btn" href="${justWatchUrl(it)}" target="_blank" rel="noopener">Wo streamen?</a>`;
 }
 
@@ -158,6 +158,20 @@ document.addEventListener('click', (e) => {
   go(a.getAttribute('href'));
 });
 
+// Nur interne Pfade als Rücksprungziel zulassen
+const nextPath = () => {
+  const n = new URLSearchParams(location.search).get('next') || '';
+  return n.startsWith('/') && !n.startsWith('//') ? n : null;
+};
+
+// Seiten mit Konto: ohne Anmeldung zum Login, danach zurück
+function needLogin() {
+  if (ME.account) return false;
+  history.replaceState(null, '', `/login?next=${encodeURIComponent(location.pathname + location.search)}`);
+  route();
+  return true;
+}
+
 function loading(text) {
   $app.innerHTML = `<div class="center-screen"><div><div class="spinner"></div>${esc(text)}</div></div>`;
 }
@@ -202,7 +216,50 @@ function watchMe() {
   meEs.onmessage = (e) => JSON.parse(e.data).type === 'changed' && refreshMe();
 }
 
-const pendingCount = () => (ME.incoming?.length || 0) + (ME.invites?.length || 0);
+const pendingCount = () =>
+  (ME.incoming?.length || 0) + (ME.invites?.length || 0) + (ME.lists || []).reduce((n, l) => n + (l.unread || 0), 0);
+
+// --- Push ---------------------------------------------------------------------
+
+async function pushSupport() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) return { supported: false };
+  if (!META) await loadMeta();
+  if (!META.vapidKey) return { supported: false };
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  return { supported: true, reg, sub: await reg.pushManager.getSubscription(), permission: Notification.permission };
+}
+
+async function subscribePush() {
+  const st = await pushSupport();
+  if (!st.supported) throw new Error('Push wird hier nicht unterstützt.');
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('Benachrichtigungen wurden nicht erlaubt.');
+  const key = Uint8Array.from(atob(META.vapidKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const sub = st.sub || (await st.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  await api('/me/push', { subscription: sub.toJSON() });
+}
+
+async function unsubscribePush() {
+  const st = await pushSupport();
+  if (!st.sub) return;
+  await api('/me/push/remove', { endpoint: st.sub.endpoint });
+  await st.sub.unsubscribe();
+}
+
+// Beim Start: Service Worker anmelden, bestehendes Abo beim Server auffrischen
+// und Nachrichten anzeigen, die ankommen, während die App offen ist
+async function initPush() {
+  if (!ME.account || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'push') toast(`${e.data.msg.title} — ${e.data.msg.body}`);
+  });
+  try {
+    const st = await pushSupport();
+    if (st.sub && st.permission === 'granted') await api('/me/push', { subscription: st.sub.toJSON() });
+  } catch {
+    // ohne Push geht alles andere auch
+  }
+}
 
 function accountPill() {
   if (!ME.account) return `<a class="pill account-pill" href="/login" data-link>Anmelden</a>`;
@@ -242,5 +299,5 @@ export {
   $app, GENRE_DE, CATEGORY_ICON, VOTE, VOTE_WEIGHT, esc, genreDe, api, toast, debounce, creds, imdbUrl,
   justWatchUrl, youtubeSearch, itemMeta, linksHtml, filterSummary, openTrailer, share, META, loadMeta,
   setRoute, onLeave, route, go, loading, ME, loadMe, onMe, accountPill, topline, sheet, prioLabel, timeAgo,
-  pendingCount,
+  pendingCount, nextPath, needLogin, pushSupport, subscribePush, unsubscribePush, initPush,
 };

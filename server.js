@@ -3,6 +3,7 @@
 
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -11,9 +12,10 @@ import {
 } from './lib/catalog.js';
 import {
   HttpError, addItems, authPlayer, castVote, createRoom, flushRooms, getRoom, joinRoom, loadRooms,
-  matches, pickFinal, resetFinal, roomsOf, startFinal, toggleVeto, viewFor,
+  allRooms, matches, pickFinal, resetFinal, roomsOf, startFinal, toggleVeto, viewFor,
 } from './lib/rooms.js';
 import * as accounts from './lib/accounts.js';
+import { createNotifier, loadVapid, sendPush, vapidPublicKey } from './lib/push.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -37,6 +39,8 @@ if (process.argv.includes('--sync-only')) {
 await loadRooms(DATA_DIR);
 await loadCatalog(DATA_DIR, log);
 accounts.openDb(DATA_DIR);
+loadVapid(DATA_DIR);
+accounts.onAccountEvent(createNotifier({ subsOf: accounts.pushSubsOf, dropSub: accounts.dropPushSub, log }));
 
 // --- Live-Updates ---------------------------------------------------------
 
@@ -161,7 +165,7 @@ function accountState(me) {
     else invites.push({ ...inv, room: roomSummary(room, me.id) });
   }
   return {
-    account: me,
+    account: { ...me, admin: accounts.isAdmin(me) },
     ...accounts.social(me),
     lists: accounts.myLists(me),
     invites,
@@ -209,7 +213,9 @@ async function api(req, res, url) {
       categories: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) => [k, v.label])),
       moods: MOODS,
       priorities: accounts.PRIORITIES,
+      reactions: accounts.REACTIONS,
       signup: SIGNUP,
+      vapidKey: vapidPublicKey(),
     });
   }
 
@@ -221,7 +227,9 @@ async function api(req, res, url) {
   if (parts[0] === 'auth') return authApi(req, res, parts[1], method);
   if (parts[0] === 'me') return meApi(req, res, parts.slice(1), method);
   if (parts[0] === 'friends') return friendsApi(req, res, parts.slice(1), method);
-  if (parts[0] === 'lists' || parts[0] === 'entries') return listsApi(req, res, parts, method, url);
+  if (parts[0] === 'lists' || parts[0] === 'entries' || parts[0] === 'activities') return listsApi(req, res, parts, method, url);
+  if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'stats') return send(res, 200, adminStats(req));
+  if (method === 'GET' && parts[0] === 'poster.svg') return posterSvg(res, url);
 
   if (method === 'POST' && parts[0] === 'preview') {
     requireCatalog();
@@ -416,6 +424,21 @@ async function meApi(req, res, parts, method) {
   if (method !== 'POST') throw new HttpError(404, 'Nicht gefunden.');
   const body = await readBody(req);
   if (parts[0] === 'profile') return send(res, 200, { account: accounts.updateProfile(me, body) });
+  if (parts[0] === 'push' && parts[1] === 'remove') {
+    accounts.removePushSub(me, body.endpoint);
+    return send(res, 200, { ok: true });
+  }
+  if (parts[0] === 'push' && parts[1] === 'test') {
+    const subs = accounts.pushSubsOf(me.id);
+    const results = await Promise.all(subs.map((sub) =>
+      sendPush(sub, { title: '🍿 Test von couchmatch', body: 'So sehen Benachrichtigungen aus.', url: '/konto' }).catch(() => 0)));
+    for (const [i, status] of results.entries()) if (status === 404 || status === 410) accounts.dropPushSub(subs[i].endpoint);
+    return send(res, 200, { devices: subs.length, delivered: results.filter((x) => x >= 200 && x < 300).length });
+  }
+  if (parts[0] === 'push') {
+    accounts.savePushSub(me, body.subscription);
+    return send(res, 200, { ok: true });
+  }
   if (parts[0] === 'password') {
     setSessionCookie(req, res, await accounts.changePassword(me, body));
     return send(res, 200, { ok: true });
@@ -445,10 +468,32 @@ async function friendsApi(req, res, parts, method) {
   throw new HttpError(400, 'Unbekannte Aktion.');
 }
 
-async function listsApi(req, res, parts, method) {
+async function listsApi(req, res, parts, method, url) {
   const me = requireAccount(req);
   const [kind, id, sub] = parts;
   if (kind === 'lists' && method === 'GET' && id && !sub) return send(res, 200, accounts.listView(me, id));
+  if (kind === 'lists' && method === 'GET' && sub === 'activity') {
+    const num = (k) => (url.searchParams.get(k) ? Number(url.searchParams.get(k)) : null);
+    return send(res, 200, { activities: accounts.activityFeed(me, id, { entryId: num('entry'), before: num('before') }) });
+  }
+  if (kind === 'lists' && method === 'POST' && sub === 'seen') {
+    accounts.markSeen(me, id);
+    return send(res, 200, { ok: true });
+  }
+  if (kind === 'lists' && method === 'POST' && sub === 'manual') {
+    const body = await readBody(req);
+    const entryId = accounts.addEntry(me, id, manualCard(body), body.priority ?? null);
+    return send(res, 201, { entryId });
+  }
+  if (kind === 'activities' && method === 'POST' && id) {
+    const body = await readBody(req);
+    if (body.action === 'react') return send(res, 200, { on: accounts.react(me, id, String(body.emoji || '')) });
+    if (body.action === 'delete') {
+      accounts.deleteComment(me, id);
+      return send(res, 200, { ok: true });
+    }
+    throw new HttpError(400, 'Unbekannte Aktion.');
+  }
   if (kind === 'lists' && method === 'POST' && sub === 'items') {
     const body = await readBody(req);
     const card = cardFor(String(body.itemId || ''), body.roomId ? getRoom(String(body.roomId)) : null);
@@ -462,10 +507,92 @@ async function listsApi(req, res, parts, method) {
     else if (body.action === 'watched') accounts.setWatched(me, id, true);
     else if (body.action === 'unwatched') accounts.setWatched(me, id, false);
     else if (body.action === 'remove') accounts.removeEntry(me, id);
+    else if (body.action === 'veto') accounts.vetoEntry(me, id, true);
+    else if (body.action === 'unveto') accounts.vetoEntry(me, id, false);
+    else if (body.action === 'comment') return send(res, 201, { id: accounts.addComment(me, id, body.text) });
     else throw new HttpError(400, 'Unbekannte Aktion.');
     return send(res, 200, { ok: true });
   }
   throw new HttpError(404, 'Nicht gefunden.');
+}
+
+// Selbst eingetragener Titel. Mit IMDb-ID aus dem Katalog wird daraus ein vollwertiger Eintrag.
+function manualCard(body) {
+  const imdb = String(body.imdb || '').match(/tt\d{5,10}/)?.[0] || null;
+  const known = imdb && findItem(imdb);
+  if (known) return toCard(known);
+  const name = String(body.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  if (!name) throw new HttpError(400, 'Wie heißt der Titel?');
+  const y = parseInt(body.year, 10);
+  const year = y >= 1880 && y <= 2100 ? y : null;
+  return {
+    id: imdb || `m-${crypto.randomUUID().slice(0, 13)}`,
+    manual: true,
+    type: body.type === 'series' ? 'series' : 'movie',
+    name,
+    year,
+    yearLabel: year ? String(year) : '',
+    released: null,
+    genres: [],
+    rating: null,
+    runtime: null,
+    description: String(body.note || '').trim().slice(0, 300),
+    poster: `/api/poster.svg?t=${encodeURIComponent(name)}${year ? `&y=${year}` : ''}`,
+    trailer: null,
+    cast: [],
+    director: [],
+    country: null,
+  };
+}
+
+// Platzhalter-Poster für selbst eingetragene Titel
+function posterSvg(res, url) {
+  const xml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+  const title = String(url.searchParams.get('t') || '?').slice(0, 120);
+  const year = String(url.searchParams.get('y') || '').replace(/\D/g, '').slice(0, 4);
+  const lines = [];
+  for (const word of title.split(' ')) {
+    const last = lines.at(-1);
+    if (last && (last + ' ' + word).length <= 14) lines[lines.length - 1] = last + ' ' + word;
+    else lines.push(word.slice(0, 18));
+  }
+  const shown = lines.slice(0, 5);
+  const hue = [...title].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  const y0 = 300 - shown.length * 22;
+  res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=604800' });
+  res.end(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 600">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="hsl(${hue},55%,32%)"/><stop offset="1" stop-color="hsl(${(hue + 60) % 360},60%,14%)"/>
+  </linearGradient></defs>
+  <rect width="400" height="600" fill="url(#g)"/>
+  <text x="200" y="120" font-size="64" text-anchor="middle">🎬</text>
+  <g font-family="system-ui,sans-serif" font-weight="800" font-size="40" fill="#fff" text-anchor="middle">
+    ${shown.map((l, i) => `<text x="200" y="${y0 + i * 48}">${xml(l)}</text>`).join('')}
+  </g>
+  ${year ? `<text x="200" y="${y0 + shown.length * 48 + 20}" font-family="system-ui,sans-serif" font-size="28" fill="#fffa" text-anchor="middle">${year}</text>` : ''}
+</svg>`);
+}
+
+function adminStats(req) {
+  const me = requireAccount(req);
+  if (!accounts.isAdmin(me)) throw new HttpError(403, 'Nur für Admins.');
+  const all = [...allRooms()];
+  const players = all.flatMap((r) => r.players);
+  return {
+    ...accounts.stats(),
+    sessions: {
+      active: all.length,
+      together: all.filter((r) => r.players.length > 1).length,
+      withAccounts: all.filter((r) => r.players.some((p) => p.accountId)).length,
+      fromWatchlist: all.filter((r) => r.filters.source === 'watchlist').length,
+      finals: all.filter((r) => r.final?.winner).length,
+      matches: all.reduce((s, r) => s + matches(r).length, 0),
+      players: players.length,
+      guests: players.filter((p) => !p.accountId).length,
+      last7: all.filter((r) => r.createdAt > Date.now() - 7 * 86400000).length,
+    },
+    catalog: catalogStatus(),
+  };
 }
 
 // --- Statische Dateien ----------------------------------------------------
@@ -479,9 +606,10 @@ const TYPES = {
   '.webmanifest': 'application/manifest+json',
 };
 
+
 async function serveStatic(res, pathname) {
   let rel = decodeURIComponent(pathname);
-  if (rel === '/' || /^\/(r|w)\/|^\/(konto|login)$/.test(rel)) rel = '/index.html';
+  if (rel === '/' || /^\/(r|w)\/|^\/(konto|login|admin)$/.test(rel)) rel = '/index.html';
   const file = path.normalize(path.join(PUBLIC, rel));
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 404, { error: 'Nicht gefunden.' });
   try {

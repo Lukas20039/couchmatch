@@ -2,10 +2,12 @@
 
 import {
   $app, CATEGORY_ICON, VOTE, ME, META, api, creds, debounce, esc, filterSummary, genreDe, go, itemMeta,
-  linksHtml, loadMe, loadMeta, loading, onLeave, onMe, openTrailer, route, setRoute, share, timeAgo,
+  initPush, linksHtml, loadMe, loadMeta, loading, onLeave, onMe, openTrailer, route, setRoute, share, timeAgo,
   toast, topline,
 } from './common.js';
-import { accountPage, loginPage, watchlistPage } from './account.js';
+import { accountPage, loginPage } from './account.js';
+import { adminPage } from './admin.js';
+import { watchlistPage } from './watchlist.js';
 
 setRoute(() => {
   const p = location.pathname;
@@ -14,6 +16,7 @@ setRoute(() => {
   else if ((m = p.match(/^\/w\/(\d+)/))) watchlistPage(Number(m[1]));
   else if (p === '/konto') accountPage();
   else if (p === '/login') loginPage();
+  else if (p === '/admin') adminPage();
   else setupPage();
 });
 
@@ -1164,3 +1167,4 @@ async function joinPage(roomId) {
 
 await loadMe();
 route();
+initPush();
