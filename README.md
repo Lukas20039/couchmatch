@@ -5,7 +5,7 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
 
 [![CI & Docker](https://github.com/Lukas20039/couchmatch/actions/workflows/docker.yml/badge.svg)](https://github.com/Lukas20039/couchmatch/actions/workflows/docker.yml)
 
-- **Keine API-Keys, keine Konten.** Im Hintergrund baut couchmatch eine lokale
+- **Keine API-Keys, Konto optional.** Im Hintergrund baut couchmatch eine lokale
   Datenbank mit ~17.000 Filmen und Serien aus dem freien
   [Cinemeta](https://v3-cinemeta.strem.io)-Katalog auf: IMDb-Bewertung, Genres,
   Laufzeit, Beschreibung, Poster und YouTube-Trailer.
@@ -27,8 +27,23 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
 - **🏆 Finale:** zu viele Matches? K.-o.-Duelle „Was lieber?", beide wählen
   live. Uneinig → höherer Match-Score gewinnt, bei Gleichstand eine Münze —
   bis genau ein Film übrig bleibt.
+- **👤 Konten (optional):** Benutzername + Passwort. Konten fragen sich
+  gegenseitig an (per Benutzername oder Verbindungslink), danach lädt man sich
+  direkt zu Sessions ein — die Einladung erscheint live im Konto. Mit Konto
+  kommt man von jedem Gerät zurück in seine Sessions. Gäste per Link gehen
+  weiterhin ohne Konto.
+- **📌 Watchlists:** jedes Konto hat eine eigene, jedes verbundene Paar eine
+  gemeinsame. Beide bewerten jeden Titel mit einer Wichtigkeit
+  (👎 eher nicht · 🙂 gern mal · 😍 will ich · 🔥 unbedingt) — oben steht,
+  worauf ihr beide am meisten Lust habt, 💞 markiert gemeinsame Favoriten.
+  Titel kommen per Suche dazu oder mit 📌 direkt aus einer Session
+  („Alle Volltreffer merken").
+- **Aus der Watchlist:** 🎬 eine Session nur aus euren offenen Titeln
+  (inkl. Veto & Finale) oder 🎲 „Was schauen wir heute?" — gewichteter Zufall,
+  „eher nicht" bleibt außen vor. Gesehenes bekommt ⭐ Sterne von beiden und
+  wird beim nächsten Setup auf Wunsch ausgeblendet.
 - **Privat:** Stimmen der anderen siehst du nur, wenn daraus ein Match wird.
-  Kein Tracking, keine Cookies, keine externen Skripte.
+  Kein Tracking, keine externen Skripte; das einzige Cookie ist die Anmeldung.
 
 ---
 
@@ -143,19 +158,28 @@ location / {
 | ---------- | --------- | ---------------------------------------------- |
 | `PORT`     | `8095`    | HTTP-Port im Container                         |
 | `HOST`     | `0.0.0.0` | Bind-Adresse                                   |
-| `DATA_DIR` | `/data`   | Film-Datenbank (`catalog.json`) und Sessions (`rooms.json`) |
+| `DATA_DIR` | `/data`   | Film-Datenbank (`catalog.json`), Sessions (`rooms.json`), Konten & Watchlists (`couchmatch.db`) |
+| `SIGNUP`   | `open`    | `closed` = keine neuen Konten (bestehende melden sich weiter an) |
+
+Alles liegt in einem Container und einem Volume — Konten und Watchlists in
+einer SQLite-Datei (über das in Node eingebaute `node:sqlite`, kein extra
+Datenbank-Container). Passwörter werden mit scrypt gehasht; Anmeldungen
+gelten 180 Tage. Läuft couchmatch hinter HTTPS, setzt der Reverse Proxy
+`X-Forwarded-Proto: https`, damit das Cookie als `Secure` markiert wird.
 
 Sessions werden nach 30 Tagen ohne Aktivität verworfen. Die Film-Datenbank
-aktualisiert sich täglich von selbst. Backup = das Volume `/data` sichern.
+aktualisiert sich täglich von selbst. Backup = das Volume `/data` sichern
+(für eine konsistente Kopie der Datenbank im laufenden Betrieb:
+`sqlite3 /data/couchmatch.db ".backup backup.db"`).
 
 ### Ohne Docker
 
-Node.js ≥ 22, keine weiteren Abhängigkeiten:
+Node.js ≥ 22.13, keine weiteren Abhängigkeiten:
 
 ```sh
 git clone https://github.com/Lukas20039/couchmatch.git
 cd couchmatch
-node server.js
+npm start
 ```
 
 ---
@@ -163,18 +187,21 @@ node server.js
 ## Entwicklung
 
 ```sh
-node server.js            # startet auf :8095, Daten in ./data
-npm test                  # Match-Logik, Super-Like-Limit, Filter
+npm start                 # startet auf :8095, Daten in ./data
+npm test                  # Match-Logik, Veto, Finale, Filter, Konten, Watchlists
 npm run smoke             # API-Durchlauf mit zwei Spielern gegen laufenden Server
 # UI-Test mit zwei simulierten Handys (braucht Playwright + Chromium):
 PLAYWRIGHT=…/playwright-core/index.mjs CHROMIUM=…/chrome node scripts/e2e.mjs
+# Konten, Anfragen, Watchlist, Direkt-Einladung (frischer Server mit leerer DB):
+PLAYWRIGHT=… CHROMIUM=… node scripts/e2e-accounts.mjs
 ```
 
 | Datei             | Inhalt                                                   |
 | ----------------- | -------------------------------------------------------- |
 | `server.js`       | HTTP-Server, API, Live-Stream (SSE), statische Dateien   |
 | `lib/catalog.js`  | Katalog-Crawl, Kategorien, Filter                        |
-| `lib/rooms.js`    | Sessions, Stimmen, Matches                               |
+| `lib/rooms.js`    | Sessions, Stimmen, Matches, Veto, Finale                 |
+| `lib/accounts.js` | SQLite: Konten, Anmeldung, Verbindungen, Watchlists      |
 | `public/`         | Frontend (Vanilla JS, kein Build-Schritt)                |
 
 Jeder Push auf `main` baut und veröffentlicht `:latest`; ein Tag `v1.2.3`

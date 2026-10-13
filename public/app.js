@@ -1,157 +1,21 @@
 // couchmatch — Frontend ohne Build-Schritt.
 
-const $app = document.getElementById('app');
+import {
+  $app, CATEGORY_ICON, VOTE, ME, META, api, creds, debounce, esc, filterSummary, genreDe, go, itemMeta,
+  linksHtml, loadMe, loadMeta, loading, onLeave, onMe, openTrailer, route, setRoute, share, timeAgo,
+  toast, topline,
+} from './common.js';
+import { accountPage, loginPage, watchlistPage } from './account.js';
 
-const GENRE_DE = {
-  Action: 'Action', Adventure: 'Abenteuer', Animation: 'Animation', Biography: 'Biografie',
-  Comedy: 'Komödie', Crime: 'Krimi', Documentary: 'Doku', Drama: 'Drama', Family: 'Familie',
-  Fantasy: 'Fantasy', History: 'Historie', Horror: 'Horror', Music: 'Musik', Musical: 'Musical',
-  Mystery: 'Mystery', Romance: 'Romantik', 'Sci-Fi': 'Sci-Fi', Sport: 'Sport',
-  Thriller: 'Thriller', War: 'Krieg', Western: 'Western', 'Reality-TV': 'Reality-TV',
-  'Talk-Show': 'Talkshow', 'Game-Show': 'Spielshow',
-};
-const CATEGORY_ICON = { popular: '🔥', new: '🆕', toprated: '⭐', classics: '🏛️', hidden: '💎' };
-const VOTE = {
-  nope: { icon: '✕', label: 'Nope' },
-  maybe: { icon: '👀', label: 'Interessant' },
-  like: { icon: '♥', label: 'Like' },
-  super: { icon: '★', label: 'Super-Like' },
-};
-const VOTE_WEIGHT = { maybe: 1, like: 2, super: 3 };
-
-// --- Helfer ---------------------------------------------------------------
-
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const genreDe = (g) => GENRE_DE[g] || g;
-
-async function api(path, body) {
-  const res = await fetch('/api' + path, body === undefined ? {} : {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `Fehler ${res.status}`), { status: res.status });
-  return data;
-}
-
-let toastTimer;
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
-}
-
-function debounce(fn, ms) {
-  let t;
-  return (...a) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
-  };
-}
-
-const creds = {
-  get: (roomId) => JSON.parse(localStorage.getItem('couchmatch:' + roomId) || 'null'),
-  set: (roomId, c) => localStorage.setItem('couchmatch:' + roomId, JSON.stringify(c)),
-  clear: (roomId) => localStorage.removeItem('couchmatch:' + roomId),
-};
-
-const imdbUrl = (it) => `https://www.imdb.com/title/${it.id}/`;
-const justWatchUrl = (it) => `https://www.justwatch.com/at/Suche?q=${encodeURIComponent(it.name)}`;
-const youtubeSearch = (it) =>
-  `https://www.youtube.com/results?search_query=${encodeURIComponent(`${it.name} ${it.year || ''} trailer`)}`;
-
-function itemMeta(it) {
-  const parts = [it.type === 'series' ? 'Serie' : 'Film', it.yearLabel || it.year];
-  if (it.runtime) parts.push(`${it.runtime} Min${it.type === 'series' ? '/Folge' : ''}`);
-  return parts.filter(Boolean);
-}
-
-function linksHtml(it) {
-  return `
-    <button class="btn trailer" data-trailer="${esc(it.id)}">▶ Trailer</button>
-    <a class="btn" href="${imdbUrl(it)}" target="_blank" rel="noopener">IMDb</a>
-    <a class="btn" href="${justWatchUrl(it)}" target="_blank" rel="noopener">Wo streamen?</a>`;
-}
-
-function filterSummary(f) {
-  const out = [];
-  if (f.mood && META?.moods[f.mood]) out.push('Stimmung: ' + META.moods[f.mood].label);
-  out.push(f.types.map((t) => (t === 'movie' ? 'Filme' : 'Serien')).join(' & '));
-  if (f.categories?.length) out.push(f.categories.map((c) => CATEGORY_ICON[c] + ' ' + (META?.categories[c] || c)).join(', '));
-  if (f.genres?.length) out.push('Genres: ' + f.genres.map(genreDe).join(', '));
-  if (f.excludeGenres?.length) out.push('Ohne: ' + f.excludeGenres.map(genreDe).join(', '));
-  if (f.minRating) out.push(`IMDb ≥ ${f.minRating}`);
-  if (f.yearFrom || f.yearTo) out.push(`Jahre ${f.yearFrom || '…'}–${f.yearTo || '…'}`);
-  if (f.maxRuntime) out.push(`Filme ≤ ${f.maxRuntime} Min`);
-  return out;
-}
-
-function openTrailer(it) {
-  const ov = document.createElement('div');
-  ov.className = 'overlay';
-  ov.innerHTML = `
-    <div class="sheet">
-      <button class="close" aria-label="Schließen">✕</button>
-      <h3 style="margin:4px 0 12px">${esc(it.name)} <span class="sub" style="color:var(--muted)">${esc(it.yearLabel || '')}</span></h3>
-      ${it.trailer
-        ? `<iframe class="video" src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(it.trailer)}?autoplay=1&rel=0&playsinline=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
-           <p class="hint"><a href="https://www.youtube.com/watch?v=${encodeURIComponent(it.trailer)}" target="_blank" rel="noopener">Auf YouTube öffnen</a> · <a href="${youtubeSearch(it)}" target="_blank" rel="noopener">Anderen Trailer suchen</a></p>`
-        : `<p>Kein Trailer hinterlegt.</p><a class="btn primary" href="${youtubeSearch(it)}" target="_blank" rel="noopener">Auf YouTube suchen</a>`}
-      <p style="font-size:14px;color:#ddd">${esc(it.description)}</p>
-    </div>`;
-  const close = () => ov.remove();
-  ov.addEventListener('click', (e) => {
-    if (e.target === ov || e.target.closest('.close')) close();
-  });
-  document.body.append(ov);
-}
-
-async function share(url, text) {
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: 'couchmatch', text, url });
-      return;
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(url);
-    toast('Link kopiert ✓');
-  } catch {
-    prompt('Link kopieren:', url);
-  }
-}
-
-let META = null;
-async function loadMeta() {
-  META = await api('/meta');
-  return META;
-}
-
-// --- Router ---------------------------------------------------------------
-
-let cleanup = () => {};
-function route() {
-  cleanup();
-  cleanup = () => {};
-  const m = location.pathname.match(/^\/r\/([A-Za-z0-9]+)/);
-  if (m) roomPage(m[1]);
+setRoute(() => {
+  const p = location.pathname;
+  let m;
+  if ((m = p.match(/^\/r\/([A-Za-z0-9]+)/))) roomPage(m[1]);
+  else if ((m = p.match(/^\/w\/(\d+)/))) watchlistPage(Number(m[1]));
+  else if (p === '/konto') accountPage();
+  else if (p === '/login') loginPage();
   else setupPage();
-}
-window.addEventListener('popstate', route);
-function go(path) {
-  history.pushState(null, '', path);
-  route();
-}
-
-function loading(text) {
-  $app.innerHTML = `<div class="center-screen"><div><div class="spinner"></div>${esc(text)}</div></div>`;
-}
+});
 
 // --- Setup ----------------------------------------------------------------
 
@@ -170,6 +34,8 @@ const DEFAULT_SETUP = {
   count: 50,
   superLimit: 3,
   vetoLimit: 1,
+  invite: [],
+  excludeWatched: true,
 };
 
 async function setupPage() {
@@ -184,16 +50,19 @@ async function setupPage() {
     const p = META.catalog.progress;
     loading(`Die Film-Datenbank wird beim ersten Start aufgebaut … ${p.total ? Math.round((p.done / p.total) * 100) : 0} %`);
     const t = setTimeout(setupPage, 2000);
-    cleanup = () => clearTimeout(t);
+    onLeave(() => clearTimeout(t));
     return;
   }
 
   const s = { ...DEFAULT_SETUP, ...JSON.parse(localStorage.getItem('couchmatch:setup') || '{}') };
   let name = localStorage.getItem('couchmatch:name') || '';
+  const friendIds = () => new Set((ME.friends || []).map((f) => f.id));
+  s.invite = (s.invite || []).filter((id) => friendIds().has(id));
 
   $app.innerHTML = `
     <div class="page">
-      <a class="brand" href="/">couchmatch</a>
+      ${topline()}
+      <div id="invites"></div>
       <h1>Was schauen wir heute?</h1>
       <p class="lead">Stell den Stapel zusammen, schick den Link — ihr swipt beide und seht am Ende, worauf ihr euch einigen könnt.</p>
 
@@ -258,10 +127,7 @@ async function setupPage() {
         <p class="hint">Mit einem Veto streicht man einen Match für alle — „den schau ich sicher nicht".</p>
       </div>
 
-      <div class="section">
-        <h3>Dein Name</h3>
-        <input class="input" id="name" maxlength="24" placeholder="z. B. Lukas" autocomplete="given-name" />
-      </div>
+      <div class="section" id="who"></div>
 
       <div id="sample" class="strip"></div>
     </div>
@@ -298,6 +164,42 @@ async function setupPage() {
       .map(([n, l]) => chip(l, Number(s.superLimit) === n ? 'on' : '', `data-super="${n}"`))
       .join('');
     q('ratingVal').textContent = s.minRating ? `${s.minRating}+` : 'egal';
+    if (ME.account) {
+      q('friendChips').innerHTML = (ME.friends || [])
+        .map((f) => chip(`👤 ${esc(f.name)}`, s.invite.includes(f.id) ? 'on' : '', `data-invite="${f.id}"`))
+        .join('') || `<a class="chip" href="/konto" data-link>+ Jemanden verbinden</a>`;
+      q('seenChip').innerHTML = chip('🙈 Schon Gesehenes ausblenden', s.excludeWatched ? 'on' : '', 'data-seen="1"');
+    }
+  }
+
+  // Angemeldet: Mitschauer:innen direkt einladen statt Namen eintippen
+  function renderWho() {
+    q('who').innerHTML = ME.account
+      ? `<h3>Wer schaut mit?</h3>
+         <div class="chips" id="friendChips"></div>
+         <p class="hint">Ausgewählte bekommen die Einladung direkt in ihr Konto — der Link funktioniert trotzdem für alle.</p>
+         <div class="chips" id="seenChip" style="margin-top:12px"></div>
+         <p class="hint">Blendet Titel aus, die du (oder die Eingeladenen) in einer Watchlist als gesehen markiert habt.</p>`
+      : `<h3>Dein Name</h3>
+         <input class="input" id="name" maxlength="24" placeholder="z. B. Lukas" autocomplete="given-name" />
+         <p class="hint"><a href="/login" data-link>Mit Konto</a> könnt ihr euch direkt einladen und Matches in einer gemeinsamen Watchlist sammeln.</p>`;
+    if (!ME.account) {
+      q('name').value = name;
+      q('name').addEventListener('input', (e) => {
+        name = e.target.value.trim();
+        localStorage.setItem('couchmatch:name', name);
+      });
+    }
+  }
+
+  function renderInvites() {
+    q('invites').innerHTML = (ME.invites || [])
+      .map((inv) => `
+        <div class="invite-banner">
+          <span>🍿 <b>${esc(inv.from.name)}</b> lädt dich zu einer Session ein (${inv.room.count} Titel, ${timeAgo(inv.at)})</span>
+          <a class="btn small primary" href="/r/${esc(inv.roomId)}" data-link>Mitmachen</a>
+        </div>`)
+      .join('');
   }
 
   q('rating').value = s.minRating || 0;
@@ -305,8 +207,13 @@ async function setupPage() {
   q('yearTo').value = s.yearTo;
   q('runtime').value = s.maxRuntime;
   q('count').value = s.count;
-  q('name').value = name;
+  renderWho();
+  renderInvites();
   renderChips();
+  onMe(() => {
+    renderInvites();
+    renderChips();
+  });
 
   const filters = () => ({
     mood: s.mood,
@@ -320,10 +227,13 @@ async function setupPage() {
     maxRuntime: s.maxRuntime || null,
   });
 
+  const accountOpts = () => (ME.account ? { invite: s.invite, excludeWatched: s.excludeWatched } : {});
+
   let available = 0;
   const preview = debounce(async () => {
     try {
-      const r = await api('/preview', { filters: filters() });
+      const r = await api('/preview', { filters: filters(), ...accountOpts() });
+      if (!q('pool')) return; // Seite inzwischen verlassen (z. B. über eine Einladung)
       available = r.available;
       const n = Math.min(Number(s.count) || 0, available);
       q('pool').innerHTML = available
@@ -332,7 +242,7 @@ async function setupPage() {
       q('create').disabled = !available;
       q('sample').innerHTML = r.sample.map((i) => `<img src="${esc(i.poster)}" alt="${esc(i.name)}" title="${esc(i.name)}" loading="lazy" />`).join('');
     } catch (err) {
-      q('pool').textContent = err.message;
+      if (q('pool')) q('pool').textContent = err.message;
     }
   }, 250);
 
@@ -383,6 +293,11 @@ async function setupPage() {
       q('count').value = s.count;
     } else if (d.super) {
       s.superLimit = Number(d.super);
+    } else if (d.invite) {
+      const id = Number(d.invite);
+      s.invite = s.invite.includes(id) ? s.invite.filter((x) => x !== id) : [...s.invite, id];
+    } else if (d.seen) {
+      s.excludeWatched = !s.excludeWatched;
     }
     changed();
   });
@@ -399,16 +314,13 @@ async function setupPage() {
       changed();
     });
   }
-  q('name').addEventListener('input', (e) => {
-    name = e.target.value.trim();
-    localStorage.setItem('couchmatch:name', name);
-  });
-
   q('create').addEventListener('click', async () => {
     const count = Math.max(1, Math.min(200, Number(s.count) || 50));
     q('create').disabled = true;
     try {
-      const r = await api('/rooms', { filters: filters(), count, superLimit: s.superLimit, vetoLimit: s.vetoLimit, name: name || 'Ich' });
+      const r = await api('/rooms', {
+        filters: filters(), count, superLimit: s.superLimit, vetoLimit: s.vetoLimit, name: name || 'Ich', ...accountOpts(),
+      });
       creds.set(r.roomId, { playerId: r.playerId, token: r.token });
       sessionStorage.setItem('couchmatch:justCreated', r.roomId);
       go('/r/' + r.roomId);
@@ -438,11 +350,55 @@ async function roomPage(roomId) {
   let dragging = false;
   let pendingRender = false;
 
-  cleanup = () => {
+  onLeave(() => {
     closed = true;
     es?.close();
     document.removeEventListener('keydown', onKey);
-  };
+  });
+
+  // Konto-Bezug: Watchlists zum Merken, Freunde zum direkten Einladen
+  let ctx = { account: false };
+  let ctxReady = Promise.resolve();
+  let listId = null;
+  let listChosen = false;
+  async function loadCtx() {
+    if (!ME.account) return;
+    try {
+      ctx = await api(`/rooms/${roomId}/context`);
+    } catch {
+      return;
+    }
+    // Der Vorschlag folgt den Mitspieler:innen, bis man selbst eine Liste wählt
+    if (!listChosen || !ctx.lists?.some((l) => l.id === listId)) listId = ctx.defaultListId ?? null;
+    refreshPins();
+    if (liveOpen()) live.refresh();
+  }
+  const currentList = () => ctx.lists?.find((l) => l.id === listId);
+  const pinned = (id) => currentList()?.onList.includes(id);
+  onMe(loadCtx);
+
+  async function pin(ids) {
+    const list = currentList();
+    if (!list) return;
+    const todo = ids.filter((id) => !list.onList.includes(id));
+    try {
+      for (const itemId of todo) {
+        await api(`/lists/${list.id}/items`, { itemId, roomId, priority: 2 });
+        list.onList.push(itemId);
+      }
+      toast(todo.length === 1 ? `📌 Auf „${list.title}" gemerkt` : `📌 ${todo.length} Titel auf „${list.title}" gemerkt`);
+    } catch (err) {
+      toast(err.message);
+    }
+    if (liveOpen()) live.refresh();
+  }
+
+  const pinBtn = (id) =>
+    !ctx.account
+      ? ''
+      : pinned(id)
+        ? `<button class="btn pin on" disabled>✓ Gemerkt</button>`
+        : `<button class="btn pin" data-pin="${esc(id)}">📌 Merken</button>`;
 
   function connect() {
     es = new EventSource(`/api/rooms/${roomId}/events?playerId=${encodeURIComponent(c.playerId)}&token=${encodeURIComponent(c.token)}`);
@@ -479,6 +435,8 @@ async function roomPage(roomId) {
 
   function onState(next) {
     const first = !view;
+    // Neue Mitspieler:innen können die passende Paar-Watchlist ändern
+    if (first || next.players.length !== view.players.length) ctxReady = loadCtx();
     view = next;
     if (knownMatches && !first) {
       const fresh = view.matches.filter((m) => !knownMatches.has(m.id));
@@ -494,7 +452,7 @@ async function roomPage(roomId) {
       buildShell();
       if (sessionStorage.getItem('couchmatch:justCreated') === roomId) {
         sessionStorage.removeItem('couchmatch:justCreated');
-        showInvite();
+        ctxReady.finally(showInvite); // erst mit Konto-Kontext, damit "Direkt einladen" dabei ist
       }
     }
     render();
@@ -614,10 +572,11 @@ async function roomPage(roomId) {
           }</p>
           <p style="margin:0"><b>${view.matches.length}</b> Match${view.matches.length === 1 ? '' : 'es'} bisher</p>
           <button class="btn primary" id="resultsBtn">💘 Matches ansehen</button>
-          <button class="btn" id="moreBtn">+ 20 weitere Titel</button>
+          ${view.filters.source === 'watchlist' ? '' : '<button class="btn" id="moreBtn">+ 20 weitere Titel</button>'}
         </div>`;
       document.getElementById('resultsBtn').onclick = showResults;
-      document.getElementById('moreBtn').onclick = async (e) => {
+      const moreBtn = document.getElementById('moreBtn');
+      if (moreBtn) moreBtn.onclick = async (e) => {
         e.target.disabled = true;
         try {
           const r = await api(`/rooms/${roomId}/more`, { ...c, count: 20 });
@@ -658,11 +617,17 @@ async function roomPage(roomId) {
           ${it.cast?.length ? `Mit: ${esc(it.cast.join(', '))}<br>` : ''}
           ${it.country ? `Land: ${esc(it.country)}` : ''}
         </div>
-        <div class="links">${linksHtml(it)}</div>
+        <div class="links">${linksHtml(it)}<span class="pin-slot" data-id="${esc(it.id)}">${pinBtn(it.id)}</span></div>
         <div class="more-hint">Antippen für mehr Infos</div>
       </div>`;
     el.querySelector('[data-trailer]').addEventListener('click', () => openTrailer(it));
+    el.querySelector('.pin-slot').addEventListener('click', (e) => e.target.closest('[data-pin]') && pin([it.id]).then(refreshPins));
     return el;
+  }
+
+  // Karten werden nicht neu gebaut, daher den Merken-Knopf nachträglich aktualisieren
+  function refreshPins() {
+    for (const slot of document.querySelectorAll('#stack .pin-slot')) slot.innerHTML = pinBtn(slot.dataset.id);
   }
 
   function stampFor(dx, dy) {
@@ -813,10 +778,31 @@ async function roomPage(roomId) {
         <button class="btn primary" id="doShare" style="flex:1">Teilen / Kopieren</button>
         <a class="btn" style="flex:1;background:#25d366;color:#fff" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">WhatsApp</a>
       </div>
+      ${ctx.friends?.length ? `
+        <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px">Direkt einladen</h3>
+        <div class="chips" id="friendInvites">${ctx.friends
+          .map((f) => f.joined
+            ? `<span class="chip on">✓ ${esc(f.name)} ist dabei</span>`
+            : `<button class="chip" data-friend="${f.id}">👤 ${esc(f.name)}</button>`)
+          .join('')}</div>
+        <p class="hint">Die Einladung erscheint sofort in ihrem Konto.</p>` : ''}
       <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px">Diese Session</h3>
       <ul class="summary-list">${filterSummary(view.filters).map((x) => `<li>${esc(x)}</li>`).join('')}<li>${view.items.length} Titel · Super-Likes: ${view.superLimit || 'unbegrenzt'} · Veto-Joker: ${view.vetoLimit || 'keine'}</li></ul>
       <button class="btn block" data-close style="margin-top:18px">Los swipen</button>`);
     ov.querySelector('#doShare').onclick = () => share(url, 'Lass uns gemeinsam einen Film aussuchen 🍿');
+    ov.querySelector('#friendInvites')?.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-friend]');
+      if (!b) return;
+      b.disabled = true;
+      try {
+        await api(`/rooms/${roomId}/invite`, { friendId: Number(b.dataset.friend) });
+        b.textContent = `✉️ ${b.textContent.replace('👤 ', '')} eingeladen`;
+        b.classList.add('on');
+      } catch (err) {
+        toast(err.message);
+        b.disabled = false;
+      }
+    });
   }
 
   function voteBadges(m) {
@@ -854,6 +840,13 @@ async function roomPage(roomId) {
     live = { kind, ov, refresh: () => (ov.querySelector('.sheet-body').innerHTML = renderFn()) };
     live.refresh();
     ov.addEventListener('click', onLiveClick);
+    ov.addEventListener('change', (e) => {
+      if (e.target.id !== 'listPick') return;
+      listId = Number(e.target.value);
+      listChosen = true;
+      live.refresh();
+      refreshPins();
+    });
   }
 
   async function act(path, body) {
@@ -868,10 +861,18 @@ async function roomPage(roomId) {
 
   async function onLiveClick(e) {
     if (e.target.closest('[data-trailer]')) return; // Trailer öffnet der Overlay-Handler
+    const p = e.target.closest('[data-pin]');
+    if (p) {
+      p.disabled = true;
+      return pin([p.dataset.pin]);
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const { action, id, duel } = el.dataset;
-    if (action === 'invite') showInvite();
+    if (action === 'pin-all') {
+      el.disabled = true;
+      pin(view.matches.filter((m) => m.strong).map((m) => m.id));
+    } else if (action === 'invite') showInvite();
     else if (action === 'random') pickRandom();
     else if (action === 'open-final') showFinal();
     else if (action === 'open-results') showResults();
@@ -926,7 +927,18 @@ async function roomPage(roomId) {
       canVeto
         ? `<button class="btn veto" data-action="veto" data-id="${esc(m.id)}" ${vetoesLeft() > 0 ? '' : 'disabled'}>🚫 Veto</button>`
         : '';
-    const row = (m) => resultRow(itemById(m.id), m, { picked: m.id === resultsPicked, actions: vetoBtn(m) });
+    const row = (m) => resultRow(itemById(m.id), m, { picked: m.id === resultsPicked, actions: pinBtn(m.id) + vetoBtn(m) });
+    const unpinned = strong.filter((m) => !pinned(m.id));
+    const listBlock = ctx.account && view.matches.length
+      ? `<div class="list-pick">
+           <label>📌 Merken auf
+             <select class="input" id="listPick">${ctx.lists
+               .map((l) => `<option value="${l.id}" ${l.id === listId ? 'selected' : ''}>${esc(l.title)}</option>`)
+               .join('')}</select>
+           </label>
+           ${unpinned.length > 1 ? `<button class="btn small" data-action="pin-all">Alle ${unpinned.length} Volltreffer merken</button>` : ''}
+         </div>`
+      : '';
 
     let finalBlock = '';
     if (view.final?.winner) {
@@ -950,6 +962,7 @@ async function roomPage(roomId) {
           ${finalBlock}
           <button class="btn block" data-action="random" style="margin-top:8px">🎲 Zufällig einen Match auswählen</button>
           ${canVeto ? `<p class="hint" style="text-align:center">Veto-Joker: noch ${vetoesLeft()} von ${view.vetoLimit}</p>` : ''}
+          ${listBlock}
           ${strong.length ? `<h3 style="margin:20px 0 0">Volltreffer (${strong.length})</h3>${strong.map(row).join('')}` : ''}
           ${weak.length ? `<h3 style="margin:20px 0 0">Vielleicht (${weak.length})</h3><p class="hint">Mindestens eine:r fand's nur „interessant".</p>${weak.map(row).join('')}` : ''}`;
 
@@ -1015,7 +1028,7 @@ async function roomPage(roomId) {
           <img src="${esc(w.poster)}" alt="" />
           <h2>${esc(w.name)}</h2>
           <div class="sub">${[w.rating ? `IMDb ${w.rating.toFixed(1)}` : null, ...itemMeta(w)].filter(Boolean).map(esc).join(' · ')}</div>
-          <div class="links" style="justify-content:center">${linksHtml(w)}</div>
+          <div class="links" style="justify-content:center">${linksHtml(w)}${pinBtn(w.id)}</div>
         </div>
         ${duelHistory(f)}
         <div class="row" style="margin-top:18px">
@@ -1101,31 +1114,40 @@ async function joinPage(roomId) {
     $app.innerHTML = `<div class="center-screen"><div><div style="font-size:48px">🤷</div><p>${esc(err.message)}</p><a class="btn primary" href="/">Eigene Session starten</a></div></div>`;
     return;
   }
+  // Mit Konto schon dabei (anderes Gerät) → direkt weiter
+  if (info.playerId) {
+    creds.set(roomId, { playerId: info.playerId, token: info.token });
+    return route();
+  }
   const saved = localStorage.getItem('couchmatch:name') || '';
+  const next = encodeURIComponent(location.pathname);
   $app.innerHTML = `
     <div class="page">
-      <a class="brand" href="/">couchmatch</a>
+      ${topline()}
       <h1>${esc(info.host)} lädt dich zum Film-Matchen ein 🍿</h1>
       <p class="lead">Swipe durch ${info.count} Titel: ♥ Like, ★ Super-Like, 👀 „sieht interessant aus" oder ✕ Nope. Am Ende seht ihr, worauf ihr euch einigen könnt.</p>
       <div class="card-panel">
         <ul class="summary-list">${filterSummary(info.filters).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
         <p class="hint">Dabei: ${info.players.map(esc).join(', ')}</p>
       </div>
-      <div class="section">
-        <h3>Dein Name</h3>
-        <input class="input" id="name" maxlength="24" placeholder="z. B. Anna" value="${esc(saved)}" autocomplete="given-name" />
-      </div>
+      ${ME.account
+        ? `<p class="hint" style="margin:22px 0 12px">Du machst mit als <b>${esc(ME.account.name)}</b> — Matches kannst du direkt in eure Watchlist übernehmen.</p>`
+        : `<div class="section">
+             <h3>Dein Name</h3>
+             <input class="input" id="name" maxlength="24" placeholder="z. B. Anna" value="${esc(saved)}" autocomplete="given-name" />
+             <p class="hint">Oder <a href="/login?next=${next}" data-link>mit Konto mitmachen</a> — dann landen Matches in eurer gemeinsamen Watchlist.</p>
+           </div>`}
       <button class="btn primary block" id="join">Mitmachen</button>
       <p class="hint" style="text-align:center;margin-top:14px">Wischen: → Like · ← Nope · ↑ Super-Like · ↓ Interessant</p>
     </div>`;
   const input = document.getElementById('name');
   const submit = async () => {
-    const name = input.value.trim();
+    const name = ME.account ? ME.account.name : input.value.trim();
     if (!name) {
       input.focus();
       return toast('Wie heißt du?');
     }
-    localStorage.setItem('couchmatch:name', name);
+    if (!ME.account) localStorage.setItem('couchmatch:name', name);
     document.getElementById('join').disabled = true;
     try {
       const r = await api(`/rooms/${roomId}/join`, { name });
@@ -1137,7 +1159,8 @@ async function joinPage(roomId) {
     }
   };
   document.getElementById('join').onclick = submit;
-  input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+  input?.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
 }
 
+await loadMe();
 route();

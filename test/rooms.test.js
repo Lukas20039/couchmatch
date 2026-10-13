@@ -135,3 +135,15 @@ test('Filter: Typen, Genres, Ausschlüsse, Kurzfilme, unveröffentlicht', () => 
   const g = sanitizeFilters({ types: ['movie', 'series', 'evil'], minRating: 8.5 });
   assert.deepEqual(filterItems(db, g, now).map((i) => i.id), ['c']);
 });
+
+test('Mit Konto tritt man nur einmal bei, roomsOf findet die Session', async () => {
+  const { roomsOf } = await import('../lib/rooms.js');
+  const { room, player: a } = createRoom({ filters: {}, items, superLimit: 0, hostName: 'A', hostAccountId: 1 });
+  const b1 = joinRoom(room, 'B', 2);
+  const b2 = joinRoom(room, 'B (Handy)', 2);
+  assert.equal(b1.id, b2.id);
+  assert.equal(room.players.length, 2);
+  assert.equal(joinRoom(room, 'Gast').accountId, null);
+  assert.ok(roomsOf(2).some((r) => r.room.id === room.id && r.player.id === b1.id));
+  assert.equal(roomsOf(1)[0].player.id, a.id);
+});
