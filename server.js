@@ -7,9 +7,10 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CATEGORIES, GENRES, MOODS, allItems, catalogStatus, filterItems, findItem, loadCatalog, sample,
+  CATEGORIES, GENRES, MOODS, allItems, catalogStatus, filterItems, findItem, loadCatalog, matchTitles, sample,
   sanitizeFilters, searchItems, syncCatalog, toCard,
 } from './lib/catalog.js';
+import { resolveShare } from './lib/share.js';
 import {
   HttpError, addItems, authPlayer, castVote, createRoom, flushRooms, getRoom, joinRoom, loadRooms,
   allRooms, matches, pickFinal, resetFinal, roomsOf, startFinal, toggleVeto, viewFor,
@@ -222,6 +223,15 @@ async function api(req, res, url) {
   if (method === 'GET' && parts[0] === 'search') {
     requireCatalog();
     return send(res, 200, { results: searchItems(url.searchParams.get('q') || '', 20) });
+  }
+
+  // Aus TikTok/Instagram geteilt: Link auflösen und passende Titel vorschlagen
+  if (method === 'POST' && parts[0] === 'share') {
+    requireAccount(req);
+    requireCatalog();
+    const shared = await resolveShare(await readBody(req));
+    const found = matchTitles([shared.caption, shared.shared].join('\n'));
+    return send(res, 200, { ...shared, ...found });
   }
 
   if (parts[0] === 'auth') return authApi(req, res, parts[1], method);
@@ -609,7 +619,7 @@ const TYPES = {
 
 async function serveStatic(res, pathname) {
   let rel = decodeURIComponent(pathname);
-  if (rel === '/' || /^\/(r|w)\/|^\/(konto|login|admin)$/.test(rel)) rel = '/index.html';
+  if (rel === '/' || /^\/(r|w)\/|^\/(konto|login|admin|teilen)$/.test(rel)) rel = '/index.html';
   const file = path.normalize(path.join(PUBLIC, rel));
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 404, { error: 'Nicht gefunden.' });
   try {

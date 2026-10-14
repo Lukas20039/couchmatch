@@ -7,6 +7,7 @@ import {
 } from './common.js';
 import { accountPage, loginPage } from './account.js';
 import { adminPage } from './admin.js';
+import { sharePage } from './share.js';
 import { watchlistPage } from './watchlist.js';
 
 setRoute(() => {
@@ -17,6 +18,7 @@ setRoute(() => {
   else if (p === '/konto') accountPage();
   else if (p === '/login') loginPage();
   else if (p === '/admin') adminPage();
+  else if (p === '/teilen') sharePage();
   else setupPage();
 });
 

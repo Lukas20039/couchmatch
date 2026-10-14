@@ -446,6 +446,11 @@ details.section > summary { font-weight: 600; }
 }
 .hit { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .hit:last-child { border-bottom: 0; }
+.shared-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px 14px; margin-bottom: 18px;
+}
+.shared-box .caption { margin: 6px 0; font-size: 14px; white-space: pre-line; overflow-wrap: anywhere; }
 .hit img { width: 36px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; background: var(--panel-2); }
 
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 22px 0 4px; }

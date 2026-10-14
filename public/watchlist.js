@@ -18,7 +18,8 @@ export async function watchlistPage(listId) {
     $app.innerHTML = `<div class="center-screen"><div><div style="font-size:48px">🤷</div><p>${esc(err.message)}</p><a class="btn primary" href="/konto" data-link>Zum Konto</a></div></div>`;
     return;
   }
-  let tab = new URLSearchParams(location.search).get('tab') === 'activity' ? 'activity' : 'open';
+  const params = new URLSearchParams(location.search);
+  let tab = params.get('tab') === 'activity' ? 'activity' : 'open';
   let onlyUnrated = false;
   let feed = null; // Verlauf der ganzen Liste, nur geladen solange der Tab offen ist
   let detail = null; // { entryId, ov, thread }
@@ -38,6 +39,7 @@ export async function watchlistPage(listId) {
         <input class="input" id="search" type="search" placeholder="🔎 Film oder Serie hinzufügen …" autocomplete="off" />
         <div class="search-results" id="results"></div>
         <button class="linkish" id="manualBtn">✍️ Nicht dabei? Selbst eintragen</button>
+        <a class="linkish" href="/teilen" data-link>📲 Link aus TikTok & Co.</a>
       </div>
       <div class="row" id="actions" style="margin-top:14px"></div>
       <div class="tabs" id="tabs"></div>
@@ -318,8 +320,8 @@ export async function watchlistPage(listId) {
   }, 250);
   q('search').addEventListener('input', search);
 
-  function openManual() {
-    const term = q('search').value.trim();
+  function openManual(prefill = {}) {
+    const term = prefill.name ?? q('search').value.trim();
     let type = 'movie';
     const ov = sheet(`
       <h2 style="margin:4px 0 6px">✍️ Selbst eintragen</h2>
@@ -335,7 +337,7 @@ export async function watchlistPage(listId) {
           <div class="field" style="max-width:120px"><label for="mYear">Jahr</label><input class="input" id="mYear" type="number" inputmode="numeric" placeholder="z. B. 2021" /></div>
           <div class="field"><label for="mImdb">IMDb-Link (optional)</label><input class="input" id="mImdb" placeholder="imdb.com/title/tt…" autocapitalize="none" /></div>
         </div>
-        <div class="field"><label for="mNote">Notiz (optional)</label><input class="input" id="mNote" maxlength="300" placeholder="z. B. „läuft auf Arte", „Tipp von Mama"" /></div>
+        <div class="field"><label for="mNote">Notiz (optional)</label><input class="input" id="mNote" maxlength="300" placeholder="z. B. „läuft auf Arte", „Tipp von Mama"" value="${esc(prefill.note || '')}" /></div>
         <button class="btn primary block">Hinzufügen</button>
       </form>`);
     // Datenbank-Treffer zum eingetippten Titel
@@ -409,7 +411,12 @@ export async function watchlistPage(listId) {
     });
     ov.querySelector('#mName').focus();
   }
-  q('manualBtn').onclick = openManual;
+  q('manualBtn').onclick = () => openManual();
+  // Von der Teilen-Seite: Dialog gleich mit Titel und Link öffnen
+  if (params.has('neu')) {
+    openManual({ name: params.get('neu'), note: params.get('notiz') || '' });
+    history.replaceState(null, '', location.pathname);
+  }
 
   // --- Aktionen ----------------------------------------------------------------
 

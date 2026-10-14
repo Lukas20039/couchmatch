@@ -39,6 +39,13 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
   Titel kommen per Suche dazu, mit 📌 direkt aus einer Session
   („Alle Volltreffer merken") oder ✍️ selbst eingetragen (Name, Jahr,
   optional IMDb-Link) — auch was der Katalog nicht kennt.
+- **📲 Aus TikTok, Instagram & YouTube:** im Video auf „Teilen" →
+  couchmatch. Die Caption wird nach dem Titel durchsucht („Film: …",
+  Anführungszeichen, Hashtags, Titel im Text), ein Tipp setzt ihn auf die
+  Watchlist, der Link landet als Kommentar dabei. Funktioniert auf Android
+  mit installierter App; iPhone kennt PWAs nicht als Teilen-Ziel — dort den
+  Link unter `/teilen` einfügen. Instagram gibt die Caption nicht immer
+  heraus, dann einfach suchen.
 - **Pro Titel:** 🚫 Veto (fliegt aus Zufallstipp und gemeinsamen Sessions,
   zurücknehmbar) und 💬 Kommentare.
 - **Aktivität:** ein Verlauf pro Watchlist mit „neu"-Markierung — hinzugefügt,
@@ -214,12 +221,15 @@ npm run smoke             # API-Durchlauf mit zwei Spielern gegen laufenden Serv
 PLAYWRIGHT=…/playwright-core/index.mjs CHROMIUM=…/chrome node scripts/e2e.mjs
 # Konten, Anfragen, Watchlist, Direkt-Einladung (frischer Server mit leerer DB):
 PLAYWRIGHT=… CHROMIUM=… node scripts/e2e-accounts.mjs
+# Teilen aus TikTok & Co. (frischer Server, YouTube-Teil braucht Internet):
+PLAYWRIGHT=… CHROMIUM=… node scripts/e2e-share.mjs
 ```
 
 | Datei             | Inhalt                                                   |
 | ----------------- | -------------------------------------------------------- |
 | `server.js`       | HTTP-Server, API, Live-Stream (SSE), statische Dateien   |
-| `lib/catalog.js`  | Katalog-Crawl, Kategorien, Filter                        |
+| `lib/catalog.js`  | Katalog-Crawl, Kategorien, Filter, Titel im Text erkennen |
+| `lib/share.js`    | Geteilte Links auflösen (TikTok/YouTube-oEmbed, Instagram) |
 | `lib/rooms.js`    | Sessions, Stimmen, Matches, Veto, Finale                 |
 | `lib/accounts.js` | SQLite: Konten, Verbindungen, Watchlists, Verlauf, Statistik |
 | `lib/push.js`     | Web Push: VAPID-Signatur, Verschlüsselung (RFC 8291), Texte |
