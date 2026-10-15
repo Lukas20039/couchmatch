@@ -2,9 +2,10 @@
 
 import {
   $app, ME, META, api, creds, debounce, esc, genreDe, go, itemMeta, linksHtml, loadMeta, loading, needLogin, onLeave,
-  onMe, openTrailer, prioLabel, sheet, timeAgo, toast, topline,
+  onMe, openTrailer, prioLabel, sheet, stremioButton, timeAgo, toast, topline,
 } from './common.js';
 
+const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const KIND_ICON = { add: '📌', comment: '💬', veto: '🚫', watched: '✓', stars: '⭐' };
 
 export async function watchlistPage(listId) {
@@ -43,6 +44,7 @@ export async function watchlistPage(listId) {
       </div>
       <div class="row" id="actions" style="margin-top:14px"></div>
       <div class="tabs" id="tabs"></div>
+      <input class="input list-filter" id="filter" type="search" placeholder="🔎 In der Liste suchen …" autocomplete="off" />
       <div id="entries"></div>
     </div>`;
   const q = (id) => document.getElementById(id);
@@ -102,6 +104,14 @@ export async function watchlistPage(listId) {
       ${p ? `<div class="rate-row"><span class="who">${esc(p.name)}</span><span class="${pp == null ? 'sub' : ''}">${esc(prioLabel(pp))}</span></div>` : ''}`;
   }
 
+  // Wie ein Suchtreffer auf der Liste steht; auf der Seite öffnet ein Tipp den Eintrag
+  function listStatus(itemId, { link = true } = {}) {
+    const e = data.entries.find((x) => x.item.id === itemId);
+    if (!e) return null;
+    const label = e.watchedAt ? '✓ gesehen' : e.vetoedBy ? '🚫 Veto' : '📌 offen';
+    return link ? `<button class="linkish status" data-open="${e.id}">${label}</button>` : `<span class="sub">${label}</span>`;
+  }
+
   const vetoBadge = (e) => (e.vetoedBy ? `<div class="veto-note">🚫 Veto von ${esc(byName(e.vetoedBy))}</div>` : '');
 
   function entryHtml(e) {
@@ -120,6 +130,7 @@ export async function watchlistPage(listId) {
           ${ratingRows(e)}
           <div class="links">
             <button class="btn trailer" data-trailer="${esc(it.id)}">▶ Trailer</button>
+            ${/^tt\d+$/.test(it.id) ? stremioButton(it) : ''}
             ${watched
               ? `<button class="btn" data-act="unwatched" data-entry="${e.id}">↶ Nicht gesehen</button>`
               : `<button class="btn seen" data-act="watched" data-entry="${e.id}">✓ Gesehen</button>`}
@@ -193,6 +204,7 @@ export async function watchlistPage(listId) {
       ${p ? `<button class="chip${tab === 'activity' ? ' on' : ''}" data-tab="activity">💬 Aktivität${data.unread ? `<span class="dot">${data.unread}</span>` : ''}</button>` : ''}
       ${tab === 'open' && unrated.length ? `<button class="chip${onlyUnrated ? ' on' : ''}" data-tab="unrated">Noch nicht bewertet (${unrated.length})</button>` : ''}`;
 
+    q('filter').hidden = tab === 'activity' || !data.entries.length;
     if (tab === 'activity') {
       q('entries').innerHTML = !feed
         ? '<div class="empty-inline"><div class="spinner"></div></div>'
@@ -206,6 +218,15 @@ export async function watchlistPage(listId) {
     if (onlyUnrated && !unrated.length) {
       onlyUnrated = false;
       list = open;
+    }
+    // Suche in der eigenen Liste: über offen und gesehen hinweg
+    const term = fold(q('filter').value);
+    if (term) {
+      const hits = [...open, ...seen].filter((e) => fold(e.item.name).includes(term));
+      q('entries').innerHTML = hits.length
+        ? `<p class="hint">${hits.length === 1 ? '1 Treffer' : `${hits.length} Treffer`} in der ganzen Liste</p>${hits.map(entryHtml).join('')}`
+        : `<div class="empty-inline"><div style="font-size:40px">🤷</div><p>Nichts auf der Liste zu „${esc(q('filter').value.trim())}". Oben kannst du es hinzufügen.</p></div>`;
+      return;
     }
     q('entries').innerHTML = list.length
       ? list.map(entryHtml).join('')
@@ -305,13 +326,12 @@ export async function watchlistPage(listId) {
     try {
       const { results } = await api(`/search?q=${encodeURIComponent(term)}`);
       if (!alive || q('search').value.trim() !== term) return;
-      const have = new Set(data.entries.map((e) => e.item.id));
       q('results').innerHTML = results.length
         ? results.map((it) => `
             <div class="hit">
               <img src="${esc(it.poster)}" alt="" loading="lazy" />
               <div class="grow"><b>${esc(it.name)}</b><div class="sub">${itemMeta(it).map(esc).join(' · ')}${it.rating ? ` · IMDb ${it.rating.toFixed(1)}` : ''}</div></div>
-              ${have.has(it.id) ? '<span class="sub">✓ drauf</span>' : `<button class="btn small primary" data-add="${esc(it.id)}">+</button>`}
+              ${listStatus(it.id) || `<button class="btn small primary" data-add="${esc(it.id)}">+</button>`}
             </div>`).join('') + `<button class="hit linkish" data-manual="1">✍️ „${esc(term)}" selbst eintragen</button>`
         : `<p class="hint" style="padding:8px 12px">Nichts gefunden. <button class="linkish" data-manual="1">✍️ „${esc(term)}" selbst eintragen</button></p>`;
     } catch (err) {
@@ -319,6 +339,7 @@ export async function watchlistPage(listId) {
     }
   }, 250);
   q('search').addEventListener('input', search);
+  q('filter').addEventListener('input', () => render());
 
   function openManual(prefill = {}) {
     const term = prefill.name ?? q('search').value.trim();
@@ -348,12 +369,11 @@ export async function watchlistPage(listId) {
       try {
         const { results } = await api(`/search?q=${encodeURIComponent(t)}`);
         if (ov.querySelector('#mName').value.trim() !== t) return;
-        const have = new Set(data.entries.map((e) => e.item.id));
         hits.innerHTML = results.slice(0, 6).map((it) => `
           <div class="hit">
             <img src="${esc(it.poster)}" alt="" loading="lazy" />
             <div class="grow"><b>${esc(it.name)}</b><div class="sub">${itemMeta(it).map(esc).join(' · ')}${it.rating ? ` · IMDb ${it.rating.toFixed(1)}` : ''}</div></div>
-            ${have.has(it.id) ? '<span class="sub">✓ drauf</span>' : `<button type="button" class="btn small primary" data-pick="${esc(it.id)}">Übernehmen</button>`}
+            ${listStatus(it.id, { link: false }) || `<button type="button" class="btn small primary" data-pick="${esc(it.id)}">Übernehmen</button>`}
           </div>`).join('') + (results.length ? '<p class="hint" style="padding:6px 12px;margin:0">Nicht dabei? Dann unten frei eintragen.</p>' : '');
       } catch {
         hits.innerHTML = '';
@@ -440,7 +460,7 @@ export async function watchlistPage(listId) {
       el.disabled = true;
       try {
         await api(`/lists/${listId}/items`, { itemId: d.add, priority: 2 });
-        el.outerHTML = '<span class="sub">✓ drauf</span>';
+        el.outerHTML = '<span class="sub">📌 offen</span>';
         toast(partner() ? `📌 Hinzugefügt — ${partner().name} bekommt Bescheid` : '📌 Hinzugefügt');
         await reload();
       } catch (err) {

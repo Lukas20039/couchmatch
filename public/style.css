@@ -454,6 +454,10 @@ details.section > summary { font-weight: 600; }
 .hit img { width: 36px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; background: var(--panel-2); }
 
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 22px 0 4px; }
+.search > .linkish { display: inline-block; margin: 6px 16px 0 0; }
+.list-filter { margin: 10px 0 4px; }
+.list-filter[hidden] { display: none; }
+.hit .status { white-space: nowrap; font-size: 13px; }
 .entry.unrated { box-shadow: inset 3px 0 0 var(--maybe); padding-left: 10px; }
 .rate-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; flex-wrap: wrap; }
 .rate-row .who { width: 64px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -517,6 +521,7 @@ button.hit.linkish { width: 100%; text-align: left; padding: 10px 12px; }
 .detail-desc { font-size: 14px; color: #ddd; margin: 12px 0 0; }
 .detail-body .links .btn { padding: 8px 12px; font-size: 13px; }
 .detail-body .links .btn.trailer { background: #ff0033; color: #fff; }
+.links .btn.stremio { background: #7b5bf5; color: #fff; }
 .thread .activity:last-child { border-bottom: 0; }
 .comment-form { display: flex; gap: 8px; margin-top: 10px; position: sticky; bottom: -18px; background: var(--bg); padding: 8px 0 4px; }
 .comment-form .input { flex: 1; }

@@ -39,6 +39,10 @@ am Ende seht ihr, welche Filme und Serien ihr beide sehen wollt.
   Titel kommen per Suche dazu, mit 📌 direkt aus einer Session
   („Alle Volltreffer merken") oder ✍️ selbst eingetragen (Name, Jahr,
   optional IMDb-Link) — auch was der Katalog nicht kennt.
+- **▶ Stremio:** jeder Titel mit IMDb-ID springt direkt auf seine Seite in
+  Stremio (der Katalog kommt von Cinemeta, die IDs passen 1:1). Android:
+  App per Intent, ohne App Stremio Web; iPhone: Stremio Web; Desktop: App
+  über `stremio://`, sonst Stremio Web.
 - **📲 Aus TikTok, Instagram & YouTube:** im Video auf „Teilen" →
   couchmatch. Die Caption wird nach dem Titel durchsucht („Film: …",
   Anführungszeichen, Hashtags, Titel im Text), ein Tipp setzt ihn auf die

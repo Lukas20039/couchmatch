@@ -71,11 +71,59 @@ function itemMeta(it) {
 }
 
 function linksHtml(it) {
+  const known = /^tt\d+$/.test(it.id);
   return `
     <button class="btn trailer" data-trailer="${esc(it.id)}">▶ Trailer</button>
-    ${/^tt\d+$/.test(it.id) ? `<a class="btn" href="${imdbUrl(it)}" target="_blank" rel="noopener">IMDb</a>` : ''}
+    ${known ? stremioButton(it) : ''}
+    ${known ? `<a class="btn" href="${imdbUrl(it)}" target="_blank" rel="noopener">IMDb</a>` : ''}
     <a class="btn" href="${justWatchUrl(it)}" target="_blank" rel="noopener">Wo streamen?</a>`;
 }
+
+// --- Stremio -------------------------------------------------------------------
+// Der Katalog kommt von Cinemeta (Stremio), die IMDb-IDs passen also direkt.
+// Filme: /detail/movie/{id}/{id}, Serien ohne Folge: /detail/series/{id} (Folgenliste)
+
+const stremioPath = (type, id) => (type === 'series' ? `detail/series/${id}` : `detail/movie/${id}/${id}`);
+const stremioApp = (type, id) => `stremio:///${stremioPath(type, id)}`;
+const stremioWeb = (type, id) => `https://web.stremio.com/#/${stremioPath(type, id)}`;
+// Android: Chrome-Intent mit eingebautem Rückfall auf Stremio Web, wenn die App fehlt
+const stremioIntent = (type, id) =>
+  `intent:///${stremioPath(type, id)}#Intent;scheme=stremio;S.browser_fallback_url=${encodeURIComponent(stremioWeb(type, id))};end`;
+const isAndroid = /Android/i.test(navigator.userAgent);
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function stremioButton(it) {
+  const type = it.type === 'series' ? 'series' : 'movie';
+  // iPhone/iPad: keine Stremio-App, die solche Links annimmt → gleich Stremio Web
+  if (isIOS) return `<a class="btn stremio" href="${stremioWeb(type, it.id)}" target="_blank" rel="noopener">▶ Stremio</a>`;
+  if (isAndroid) return `<a class="btn stremio" href="${esc(stremioIntent(type, it.id))}">▶ Stremio</a>`;
+  return `<a class="btn stremio" href="${stremioWeb(type, it.id)}" data-stremio="${esc(it.id)}" data-type="${type}" target="_blank" rel="noopener">▶ Stremio</a>`;
+}
+
+// Desktop: App über ein unsichtbares iframe ansprechen (die Seite selbst navigiert nicht weg);
+// geht kein Fenster auf (Seite behält den Fokus), dann Stremio Web
+function openStremio(type, id) {
+  let left = false;
+  const away = () => (left = true);
+  window.addEventListener('blur', away, { once: true });
+  document.addEventListener('visibilitychange', away, { once: true });
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = stremioApp(type, id);
+  document.body.append(frame);
+  setTimeout(() => {
+    frame.remove();
+    window.removeEventListener('blur', away);
+    document.removeEventListener('visibilitychange', away);
+    if (!left && document.visibilityState === 'visible') window.open(stremioWeb(type, id), '_blank', 'noopener');
+  }, 1200);
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-stremio]');
+  if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault();
+  openStremio(a.dataset.type, a.dataset.stremio);
+});
 
 function filterSummary(f) {
   if (f.source === 'watchlist') return [`📌 ${f.listTitle || 'Watchlist'} — nur Titel, die schon drauf stehen`];
@@ -297,7 +345,7 @@ function timeAgo(ts) {
 
 export {
   $app, GENRE_DE, CATEGORY_ICON, VOTE, VOTE_WEIGHT, esc, genreDe, api, toast, debounce, creds, imdbUrl,
-  justWatchUrl, youtubeSearch, itemMeta, linksHtml, filterSummary, openTrailer, share, META, loadMeta,
+  justWatchUrl, youtubeSearch, itemMeta, linksHtml, stremioButton, stremioApp, stremioWeb, filterSummary, openTrailer, share, META, loadMeta,
   setRoute, onLeave, route, go, loading, ME, loadMe, onMe, accountPill, topline, sheet, prioLabel, timeAgo,
   pendingCount, nextPath, needLogin, pushSupport, subscribePush, unsubscribePush, initPush,
 };

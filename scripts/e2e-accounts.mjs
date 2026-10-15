@@ -149,6 +149,54 @@ await anna.waitForTimeout(400);
 await anna.screenshot({ path: `${SHOTS}/20-watched.png` });
 check('Gesehen-Tab mit Sternen', (await anna.locator('.stars.edit button:not(.off)').count()) === 4);
 
+// Suche zeigt, wie ein Titel auf der Liste steht
+await anna.click('[data-tab="open"]');
+await anna.fill('#search', picked);
+await anna.waitForSelector(`#results .hit:has(b:text-is("${picked}")) .status`);
+check('Suche: gesehener Titel als „gesehen"', (await anna.textContent(`#results .hit:has(b:text-is("${picked}")) .status`)).includes('gesehen'));
+await anna.fill('#search', 'Heat');
+await anna.waitForSelector('#results .hit:has(b:text-is("Heat")) .status');
+check('Suche: offener Titel als „offen"', (await anna.textContent('#results .hit:has(b:text-is("Heat")) .status')).includes('offen'));
+await anna.click('#results .hit:has(b:text-is("Heat")) .status');
+await anna.waitForSelector('.overlay .detail-body h2:text-is("Heat")');
+check('Tipp auf den Status öffnet den Eintrag', true);
+await anna.locator('.overlay .close').click();
+await anna.fill('#search', '');
+// In der eigenen Liste suchen — auch Gesehenes vom Offen-Tab aus
+await anna.fill('#filter', picked.slice(0, 5).toLowerCase());
+await anna.waitForSelector(`#entries .entry:has-text("${picked}")`);
+check('Listensuche findet Gesehenes auch im Offen-Tab', (await anna.textContent('#entries .hint')).includes('in der ganzen Liste'));
+await anna.screenshot({ path: `${SHOTS}/20b-filter.png` });
+await anna.fill('#filter', 'xyzxyz');
+await anna.waitForSelector('#entries .empty-inline');
+check('Listensuche ohne Treffer', (await anna.locator('#entries .entry').count()) === 0);
+await anna.fill('#filter', '');
+await anna.waitForSelector('#entries .entry');
+
+// Stremio — in eigenen Tabs: Headless-Chrome lässt den „App öffnen?"-Dialog für stremio://
+// unsichtbar offen und nimmt in dem Tab danach keine Eingaben mehr an.
+const tab = await anna.context().newPage();
+await tab.goto(anna.url());
+const heatIn = (pg) => pg.locator('.entry').filter({ has: pg.locator('h4', { hasText: /^Heat(?![a-z])/ }) }).locator('a.stremio');
+const heat = heatIn(tab);
+check('Stremio-Knopf mit Web-Adresse', /^https:\/\/web\.stremio\.com\/#\/detail\/movie\/(tt\d+)\/\1$/.test(await heat.getAttribute('href')));
+await tab.context().route('https://web.stremio.com/**', (r) => r.fulfill({ body: 'stremio' }));
+const [popup] = await Promise.all([tab.context().waitForEvent('page', { timeout: 5000 }), heat.click()]);
+check('ohne App → Stremio Web mit dem Titel', popup.url().startsWith('https://web.stremio.com/#/detail/movie/tt'));
+await popup.close();
+await tab.close();
+await anna.bringToFront();
+// Android: Chrome-Intent mit Rückfall auf Stremio Web
+const droid = await (await browser.newContext({
+  ...phone,
+  userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36',
+  storageState: await anna.context().storageState(),
+})).newPage();
+await droid.goto(anna.url());
+const intent = await heatIn(droid).getAttribute('href');
+check('Android: Intent mit Web-Rückfall', /^intent:\/\/\/detail\/movie\/(tt\d+)\/\1#Intent;scheme=stremio;S\.browser_fallback_url=https%3A%2F%2Fweb\.stremio\.com/.test(intent));
+await droid.context().close();
+
 console.log('7. Session aus der Watchlist');
 await anna.click('[data-tab="open"]');
 await anna.click('[data-act="session"]');
